@@ -1,59 +1,67 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #pragma once
 
-#include "HashTable.h"
-#include "StdLibExtras.h"
-#include "kstdio.h"
+#include <AK/HashTable.h>
+#include <AK/Optional.h>
+#include <AK/StdLibExtras.h>
+#include <AK/Vector.h>
 
 namespace AK {
 
-template<typename K, typename V>
+template<typename K, typename V, typename KeyTraits>
 class HashMap {
 private:
     struct Entry {
         K key;
         V value;
-
-        bool operator==(const Entry& other)
-        {
-            return key == other.key;
-        }
     };
 
     struct EntryTraits {
-        static unsigned hash(const Entry& entry) { return Traits<K>::hash(entry.key); }
-        static void dump(const Entry& entry)
-        {
-            kprintf("key=");
-            Traits<K>::dump(entry.key);
-            kprintf(" value=");
-            Traits<V>::dump(entry.value);
-        }
+        static unsigned hash(const Entry& entry) { return KeyTraits::hash(entry.key); }
+        static bool equals(const Entry& a, const Entry& b) { return KeyTraits::equals(a.key, b.key); }
     };
 
 public:
-    HashMap() { }
-
-    HashMap(HashMap&& other)
-        : m_table(move(other.m_table))
-    {
-    }
-
-    HashMap& operator=(HashMap&& other)
-    {
-        if (this != &other) {
-            m_table = move(other.m_table);
-        }
-        return *this;
-    }
+    HashMap() {}
 
     bool is_empty() const { return m_table.is_empty(); }
-    unsigned size() const { return m_table.size(); }
-    unsigned capacity() const { return m_table.capacity(); }
+    size_t size() const { return m_table.size(); }
+    size_t capacity() const { return m_table.capacity(); }
     void clear() { m_table.clear(); }
 
-    void set(const K&, const V&);
-    void set(const K&, V&&);
-    void remove(const K&);
+    void set(const K& key, const V& value) { m_table.set({ key, value }); }
+    void set(const K& key, V&& value) { m_table.set({ key, move(value) }); }
+    void remove(const K& key)
+    {
+        auto it = find(key);
+        if (it != end())
+            m_table.remove(it);
+    }
     void remove_one_randomly() { m_table.remove(m_table.begin()); }
 
     typedef HashTable<Entry, EntryTraits> HashTableType;
@@ -62,19 +70,35 @@ public:
 
     IteratorType begin() { return m_table.begin(); }
     IteratorType end() { return m_table.end(); }
-    IteratorType find(const K&);
+    IteratorType find(const K& key)
+    {
+        return m_table.find(KeyTraits::hash(key), [&](auto& entry) { return KeyTraits::equals(key, entry.key); });
+    }
+    template<typename Finder>
+    IteratorType find(unsigned hash, Finder finder)
+    {
+        return m_table.find(hash, finder);
+    }
 
     ConstIteratorType begin() const { return m_table.begin(); }
     ConstIteratorType end() const { return m_table.end(); }
-    ConstIteratorType find(const K&) const;
+    ConstIteratorType find(const K& key) const
+    {
+        return m_table.find(KeyTraits::hash(key), [&](auto& entry) { return KeyTraits::equals(key, entry.key); });
+    }
+    template<typename Finder>
+    ConstIteratorType find(unsigned hash, Finder finder) const
+    {
+        return m_table.find(hash, finder);
+    }
 
-    void dump() const { m_table.dump(); }
+    void ensure_capacity(size_t capacity) { m_table.ensure_capacity(capacity); }
 
-    V get(const K& key) const
+    Optional<typename Traits<V>::PeekType> get(const K& key) const
     {
         auto it = find(key);
         if (it == end())
-            return V();
+            return {};
         return (*it).value;
     }
 
@@ -88,44 +112,27 @@ public:
         m_table.remove(it);
     }
 
+    V& ensure(const K& key)
+    {
+        auto it = find(key);
+        if (it == end())
+            set(key, V());
+        return find(key)->value;
+    }
+
+    Vector<K> keys() const
+    {
+        Vector<K> list;
+        list.ensure_capacity(size());
+        for (auto& it : *this)
+            list.unchecked_append(it.key);
+        return list;
+    }
+
 private:
-    HashTable<Entry, EntryTraits> m_table;
+    HashTableType m_table;
 };
-
-template<typename K, typename V>
-void HashMap<K, V>::set(const K& key, V&& value)
-{
-    m_table.set(Entry{key, move(value)});
-}
-
-template<typename K, typename V>
-void HashMap<K, V>::set(const K& key, const V& value)
-{
-    m_table.set(Entry{key, value});
-}
-
-template<typename K, typename V>
-void HashMap<K, V>::remove(const K& key)
-{
-    Entry dummy { key, V() };
-    m_table.remove(dummy);
-}
-
-template<typename K, typename V>
-auto HashMap<K, V>::find(const K& key) -> IteratorType
-{
-    Entry dummy { key, V() };
-    return m_table.find(dummy);
-}
-
-template<typename K, typename V>
-auto HashMap<K, V>::find(const K& key) const -> ConstIteratorType
-{
-    Entry dummy { key, V() };
-    return m_table.find(dummy);
-}
 
 }
 
 using AK::HashMap;
-

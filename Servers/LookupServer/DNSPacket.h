@@ -1,9 +1,36 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #pragma once
 
+#include <AK/NetworkOrdered.h>
 #include <AK/Types.h>
-#include <Kernel/NetworkOrdered.h>
 
-class [[gnu::packed]] DNSPacket {
+class [[gnu::packed]] DNSPacket
+{
 public:
     DNSPacket()
         : m_recursion_desired(false)
@@ -19,8 +46,8 @@ public:
     {
     }
 
-    word id() const { return m_id; }
-    void set_id(word w) { m_id = w; }
+    u16 id() const { return m_id; }
+    void set_id(u16 w) { m_id = w; }
 
     bool recursion_desired() const { return m_recursion_desired; }
     void set_recursion_desired(bool b) { m_recursion_desired = b; }
@@ -31,16 +58,16 @@ public:
     bool is_authoritative_answer() const { return m_authoritative_answer; }
     void set_authoritative_answer(bool b) { m_authoritative_answer = b; }
 
-    byte opcode() const { return m_opcode; }
-    void set_opcode(byte b) { m_opcode = b; }
+    u8 opcode() const { return m_opcode; }
+    void set_opcode(u8 b) { m_opcode = b; }
 
     bool is_query() const { return !m_query_or_response; }
     bool is_response() const { return m_query_or_response; }
     void set_is_query() { m_query_or_response = false; }
     void set_is_response() { m_query_or_response = true; }
 
-    byte response_code() const { return m_response_code; }
-    void set_response_code(byte b) { m_response_code = b; }
+    u8 response_code() const { return m_response_code; }
+    void set_response_code(u8 b) { m_response_code = b; }
 
     bool checking_disabled() const { return m_checking_disabled; }
     void set_checking_disabled(bool b) { m_checking_disabled = b; }
@@ -51,39 +78,39 @@ public:
     bool is_recursion_available() const { return m_recursion_available; }
     void set_recursion_available(bool b) { m_recursion_available = b; }
 
-    word question_count() const { return m_question_count; }
-    void set_question_count(word w) { m_question_count = w; }
+    u16 question_count() const { return m_question_count; }
+    void set_question_count(u16 w) { m_question_count = w; }
 
-    word answer_count() const { return m_answer_count; }
-    void set_answer_count(word w) { m_answer_count = w; }
+    u16 answer_count() const { return m_answer_count; }
+    void set_answer_count(u16 w) { m_answer_count = w; }
 
-    word authority_count() const { return m_authority_count; }
-    void set_authority_count(word w) { m_authority_count = w; }
+    u16 authority_count() const { return m_authority_count; }
+    void set_authority_count(u16 w) { m_authority_count = w; }
 
-    word additional_count() const { return m_additional_count; }
-    void set_additional_count(word w) { m_additional_count = w; }
+    u16 additional_count() const { return m_additional_count; }
+    void set_additional_count(u16 w) { m_additional_count = w; }
 
     void* payload() { return this + 1; }
     const void* payload() const { return this + 1; }
 
 private:
-    NetworkOrdered<word> m_id;
+    NetworkOrdered<u16> m_id;
 
     bool m_recursion_desired : 1;
     bool m_truncated : 1;
     bool m_authoritative_answer : 1;
-    byte m_opcode : 4;
+    u8 m_opcode : 4;
     bool m_query_or_response : 1;
-    byte m_response_code : 4;
+    u8 m_response_code : 4;
     bool m_checking_disabled : 1;
     bool m_authenticated_data : 1;
     bool m_zero : 1;
     bool m_recursion_available : 1;
 
-    NetworkOrdered<word> m_question_count;
-    NetworkOrdered<word> m_answer_count;
-    NetworkOrdered<word> m_authority_count;
-    NetworkOrdered<word> m_additional_count;
+    NetworkOrdered<u16> m_question_count;
+    NetworkOrdered<u16> m_answer_count;
+    NetworkOrdered<u16> m_authority_count;
+    NetworkOrdered<u16> m_additional_count;
 };
 
 static_assert(sizeof(DNSPacket) == 12);

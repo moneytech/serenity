@@ -1,33 +1,18 @@
 OBJS = \
     FontEditor.o \
+    GlyphMapWidget.o \
+    GlyphEditorWidget.o \
     main.o
 
-APP = FontEditor
+PROGRAM = FontEditor
 
-STANDARD_FLAGS = -std=c++17
-WARNING_FLAGS = -Wextra -Wall -Wundef -Wcast-qual -Wwrite-strings -Wimplicit-fallthrough
-FLAVOR_FLAGS = -fno-exceptions -fno-rtti
-OPTIMIZATION_FLAGS = -Os
-INCLUDE_FLAGS = -I../.. -I. -I../../LibC
+LIB_DEPS = GUI Gfx Core IPC
 
-DEFINES = -DSERENITY -DSANITIZE_PTRS -DUSERLAND
+FontEditor.cpp: UI_FontEditorBottom.h
 
-CXXFLAGS = -MMD -MP $(WARNING_FLAGS) $(OPTIMIZATION_FLAGS) $(FLAVOR_FLAGS) $(STANDARD_FLAGS) $(INCLUDE_FLAGS) $(DEFINES)
-CXX = i686-pc-serenity-g++
-LD = i686-pc-serenity-g++
-AR = i686-pc-serenity-ar
-LDFLAGS = -L../../LibC -L../../LibGUI
+UI_FontEditorBottom.h: FontEditorBottom.frm | FORMCOMPILER
+	$(QUIET) $(FORMCOMPILER) $< > $@
 
-all: $(APP)
+EXTRA_CLEAN = UI_FontEditorBottom.h
 
-$(APP): $(OBJS)
-	$(LD) -o $(APP) $(LDFLAGS) $(OBJS) -lgui -lc
-
-.cpp.o:
-	@echo "CXX $<"; $(CXX) $(CXXFLAGS) -o $@ -c $<
-
--include $(OBJS:%.o=%.d)
-
-clean:
-	@echo "CLEAN"; rm -f $(APPS) $(OBJS) *.d
-
+include ../../Makefile.common

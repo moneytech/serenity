@@ -1,261 +1,181 @@
-#include "i386.h"
-#include "Process.h"
-#include "Syscall.h"
-#include "Console.h"
-#include "Scheduler.h"
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
-extern "C" void syscall_trap_entry(RegisterDump&);
-extern "C" void syscall_trap_handler();
-extern volatile RegisterDump* syscallRegDump;
+#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Process.h>
+#include <Kernel/ProcessTracer.h>
+#include <Kernel/Random.h>
+#include <Kernel/Syscall.h>
+#include <Kernel/VM/MemoryManager.h>
+
+namespace Kernel {
+
+extern "C" void syscall_handler(RegisterState);
+extern "C" void syscall_asm_entry();
 
 asm(
-    ".globl syscall_trap_handler \n"
-    "syscall_trap_handler:\n"
+    ".globl syscall_asm_entry\n"
+    "syscall_asm_entry:\n"
+    "    pushl $0x0\n"
     "    pusha\n"
-    "    pushw %ds\n"
-    "    pushw %es\n"
-    "    pushw %fs\n"
-    "    pushw %gs\n"
-    "    pushw %ss\n"
-    "    pushw %ss\n"
-    "    pushw %ss\n"
-    "    pushw %ss\n"
-    "    pushw %ss\n"
-    "    popw %ds\n"
-    "    popw %es\n"
-    "    popw %fs\n"
-    "    popw %gs\n"
-    "    mov %esp, %eax\n"
-    "    call syscall_trap_entry\n"
-    "    popw %gs\n"
-    "    popw %gs\n"
-    "    popw %fs\n"
-    "    popw %es\n"
-    "    popw %ds\n"
+    "    pushl %ds\n"
+    "    pushl %es\n"
+    "    pushl %fs\n"
+    "    pushl %gs\n"
+    "    pushl %ss\n"
+    "    mov $0x10, %ax\n"
+    "    mov %ax, %ds\n"
+    "    mov %ax, %es\n"
+    "    cld\n"
+    "    xor %esi, %esi\n"
+    "    xor %edi, %edi\n"
+    "    call syscall_handler\n"
+    "    add $0x4, %esp\n"
+    "    popl %gs\n"
+    "    popl %fs\n"
+    "    popl %es\n"
+    "    popl %ds\n"
     "    popa\n"
-    "    iret\n"
-);
+    "    add $0x4, %esp\n"
+    "    iret\n");
 
 namespace Syscall {
 
+static int handle(RegisterState&, u32 function, u32 arg1, u32 arg2, u32 arg3);
+
 void initialize()
 {
-    register_user_callable_interrupt_handler(0x82, syscall_trap_handler);
+    register_user_callable_interrupt_handler(0x82, syscall_asm_entry);
     kprintf("Syscall: int 0x82 handler installed\n");
 }
 
-int sync()
-{
-    VFS::the().sync();
-    return 0;
-}
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+typedef int (Process::*Handler)(u32, u32, u32);
+#define __ENUMERATE_REMOVED_SYSCALL(x) nullptr,
+#define __ENUMERATE_SYSCALL(x) reinterpret_cast<Handler>(&Process::sys$##x),
+static Handler s_syscall_table[] = {
+    ENUMERATE_SYSCALLS
+};
+#undef __ENUMERATE_SYSCALL
+#undef __ENUMERATE_REMOVED_SYSCALL
 
-static dword handle(RegisterDump& regs, dword function, dword arg1, dword arg2, dword arg3)
+int handle(RegisterState& regs, u32 function, u32 arg1, u32 arg2, u32 arg3)
 {
     ASSERT_INTERRUPTS_ENABLED();
-    switch (function) {
-    case Syscall::SC_yield:
-        Scheduler::yield();
-        break;
-    case Syscall::SC_donate:
-        return current->process().sys$donate((int)arg1);
-    case Syscall::SC_gettid:
-        return current->process().sys$gettid();
-    case Syscall::SC_putch:
-        Console::the().put_char(arg1 & 0xff);
-        break;
-    case Syscall::SC_sleep:
-        return current->process().sys$sleep((unsigned)arg1);
-    case Syscall::SC_usleep:
-        return current->process().sys$usleep((unsigned)arg1);
-    case Syscall::SC_gettimeofday:
-        return current->process().sys$gettimeofday((timeval*)arg1);
-    case Syscall::SC_get_dir_entries:
-        return current->process().sys$get_dir_entries((int)arg1, (void*)arg2, (size_t)arg3);
-    case Syscall::SC_lstat:
-        return current->process().sys$lstat((const char*)arg1, (stat*)arg2);
-    case Syscall::SC_stat:
-        return current->process().sys$stat((const char*)arg1, (stat*)arg2);
-    case Syscall::SC_getcwd:
-        return current->process().sys$getcwd((char*)arg1, (size_t)arg2);
-    case Syscall::SC_open:
-        return current->process().sys$open((const char*)arg1, (int)arg2, (mode_t)arg3);
-    case Syscall::SC_write:
-        return current->process().sys$write((int)arg1, (const byte*)arg2, (ssize_t)arg3);
-    case Syscall::SC_close:
-        return current->process().sys$close((int)arg1);
-    case Syscall::SC_read:
-        return current->process().sys$read((int)arg1, (byte*)arg2, (ssize_t)arg3);
-    case Syscall::SC_lseek:
-        return current->process().sys$lseek((int)arg1, (off_t)arg2, (int)arg3);
-    case Syscall::SC_kill:
-        return current->process().sys$kill((pid_t)arg1, (int)arg2);
-    case Syscall::SC_getuid:
-        return current->process().sys$getuid();
-    case Syscall::SC_getgid:
-        return current->process().sys$getgid();
-    case Syscall::SC_getpid:
-        return current->process().sys$getpid();
-    case Syscall::SC_getppid:
-        return current->process().sys$getppid();
-    case Syscall::SC_waitpid:
-        return current->process().sys$waitpid((pid_t)arg1, (int*)arg2, (int)arg3);
-    case Syscall::SC_mmap:
-        return (dword)current->process().sys$mmap((const SC_mmap_params*)arg1);
-    case Syscall::SC_select:
-        return current->process().sys$select((const SC_select_params*)arg1);
-    case Syscall::SC_poll:
-        return current->process().sys$poll((pollfd*)arg1, (int)arg2, (int)arg3);
-    case Syscall::SC_munmap:
-        return current->process().sys$munmap((void*)arg1, (size_t)arg2);
-    case Syscall::SC_gethostname:
-        return current->process().sys$gethostname((char*)arg1, (size_t)arg2);
-    case Syscall::SC_exit:
+    auto& process = *Process::current;
+    Thread::current->did_syscall();
+
+    if (function == SC_exit || function == SC_exit_thread) {
+        // These syscalls need special handling since they never return to the caller.
         cli();
-        current->process().sys$exit((int)arg1);
+        if (auto* tracer = process.tracer())
+            tracer->did_syscall(function, arg1, arg2, arg3, 0);
+        if (function == SC_exit)
+            process.sys$exit((int)arg1);
+        else
+            process.sys$exit_thread((void*)arg1);
         ASSERT_NOT_REACHED();
         return 0;
-    case Syscall::SC_chdir:
-        return current->process().sys$chdir((const char*)arg1);
-    case Syscall::SC_uname:
-        return current->process().sys$uname((utsname*)arg1);
-    case Syscall::SC_set_mmap_name:
-        return current->process().sys$set_mmap_name((void*)arg1, (size_t)arg2, (const char*)arg3);
-    case Syscall::SC_readlink:
-        return current->process().sys$readlink((const char*)arg1, (char*)arg2, (size_t)arg3);
-    case Syscall::SC_ttyname_r:
-        return current->process().sys$ttyname_r((int)arg1, (char*)arg2, (size_t)arg3);
-    case Syscall::SC_ptsname_r:
-        return current->process().sys$ptsname_r((int)arg1, (char*)arg2, (size_t)arg3);
-    case Syscall::SC_setsid:
-        return current->process().sys$setsid();
-    case Syscall::SC_getsid:
-        return current->process().sys$getsid((pid_t)arg1);
-    case Syscall::SC_setpgid:
-        return current->process().sys$setpgid((pid_t)arg1, (pid_t)arg2);
-    case Syscall::SC_getpgid:
-        return current->process().sys$getpgid((pid_t)arg1);
-    case Syscall::SC_getpgrp:
-        return current->process().sys$getpgrp();
-    case Syscall::SC_fork:
-        return current->process().sys$fork(regs);
-    case Syscall::SC_execve:
-        return current->process().sys$execve((const char*)arg1, (const char**)arg2, (const char**)arg3);
-    case Syscall::SC_geteuid:
-        return current->process().sys$geteuid();
-    case Syscall::SC_getegid:
-        return current->process().sys$getegid();
-    case Syscall::SC_isatty:
-        return current->process().sys$isatty((int)arg1);
-    case Syscall::SC_getdtablesize:
-        return current->process().sys$getdtablesize();
-    case Syscall::SC_dup:
-        return current->process().sys$dup((int)arg1);
-    case Syscall::SC_dup2:
-        return current->process().sys$dup2((int)arg1, (int)arg2);
-    case Syscall::SC_sigaction:
-        return current->process().sys$sigaction((int)arg1, (const sigaction*)arg2, (sigaction*)arg3);
-    case Syscall::SC_umask:
-        return current->process().sys$umask((mode_t)arg1);
-    case Syscall::SC_getgroups:
-        return current->process().sys$getgroups((ssize_t)arg1, (gid_t*)arg2);
-    case Syscall::SC_setgroups:
-        return current->process().sys$setgroups((ssize_t)arg1, (const gid_t*)arg2);
-    case Syscall::SC_sigreturn:
-        current->process().sys$sigreturn();
-        ASSERT_NOT_REACHED();
-        return 0;
-    case Syscall::SC_sigprocmask:
-        return current->process().sys$sigprocmask((int)arg1, (const sigset_t*)arg2, (sigset_t*)arg3);
-    case Syscall::SC_pipe:
-        return current->process().sys$pipe((int*)arg1);
-    case Syscall::SC_killpg:
-        return current->process().sys$killpg((int)arg1, (int)arg2);
-    case Syscall::SC_setuid:
-        return current->process().sys$setuid((uid_t)arg1);
-    case Syscall::SC_setgid:
-        return current->process().sys$setgid((gid_t)arg1);
-    case Syscall::SC_alarm:
-        return current->process().sys$alarm((unsigned)arg1);
-    case Syscall::SC_access:
-        return current->process().sys$access((const char*)arg1, (int)arg2);
-    case Syscall::SC_fcntl:
-        return current->process().sys$fcntl((int)arg1, (int)arg2, (dword)arg3);
-    case Syscall::SC_ioctl:
-        return current->process().sys$ioctl((int)arg1, (unsigned)arg2, (unsigned)arg3);
-    case Syscall::SC_fstat:
-        return current->process().sys$fstat((int)arg1, (stat*)arg2);
-    case Syscall::SC_mkdir:
-        return current->process().sys$mkdir((const char*)arg1, (mode_t)arg2);
-    case Syscall::SC_times:
-        return current->process().sys$times((tms*)arg1);
-    case Syscall::SC_utime:
-        return current->process().sys$utime((const char*)arg1, (const utimbuf*)arg2);
-    case Syscall::SC_sync:
-        return sync();
-    case Syscall::SC_link:
-        return current->process().sys$link((const char*)arg1, (const char*)arg2);
-    case Syscall::SC_unlink:
-        return current->process().sys$unlink((const char*)arg1);
-    case Syscall::SC_symlink:
-        return current->process().sys$symlink((const char*)arg1, (const char*)arg2);
-    case Syscall::SC_read_tsc:
-        return current->process().sys$read_tsc((dword*)arg1, (dword*)arg2);
-    case Syscall::SC_rmdir:
-        return current->process().sys$rmdir((const char*)arg1);
-    case Syscall::SC_chmod:
-        return current->process().sys$chmod((const char*)arg1, (mode_t)arg2);
-    case Syscall::SC_fchmod:
-        return current->process().sys$fchmod((int)arg1, (mode_t)arg2);
-    case Syscall::SC_socket:
-        return current->process().sys$socket((int)arg1, (int)arg2, (int)arg3);
-    case Syscall::SC_bind:
-        return current->process().sys$bind((int)arg1, (const sockaddr*)arg2, (socklen_t)arg3);
-    case Syscall::SC_listen:
-        return current->process().sys$listen((int)arg1, (int)arg2);
-    case Syscall::SC_accept:
-        return current->process().sys$accept((int)arg1, (sockaddr*)arg2, (socklen_t*)arg3);
-    case Syscall::SC_connect:
-        return current->process().sys$connect((int)arg1, (const sockaddr*)arg2, (socklen_t)arg3);
-    case Syscall::SC_create_shared_buffer:
-        return current->process().sys$create_shared_buffer((pid_t)arg1, (size_t)arg2, (void**)arg3);
-    case Syscall::SC_get_shared_buffer:
-        return (dword)current->process().sys$get_shared_buffer((int)arg1);
-    case Syscall::SC_release_shared_buffer:
-        return current->process().sys$release_shared_buffer((int)arg1);
-    case Syscall::SC_chown:
-        return current->process().sys$chown((const char*)arg1, (uid_t)arg2, (gid_t)arg3);
-    case Syscall::SC_restore_signal_mask:
-        return current->process().sys$restore_signal_mask((dword)arg1);
-    case Syscall::SC_seal_shared_buffer:
-        return current->process().sys$seal_shared_buffer((int)arg1);
-    case Syscall::SC_get_shared_buffer_size:
-        return current->process().sys$get_shared_buffer_size((int)arg1);
-    case Syscall::SC_sendto:
-        return current->process().sys$sendto((const SC_sendto_params*)arg1);
-    case Syscall::SC_recvfrom:
-        return current->process().sys$recvfrom((const SC_recvfrom_params*)arg1);
-    case Syscall::SC_getsockopt:
-        return current->process().sys$getsockopt((const SC_getsockopt_params*)arg1);
-    case Syscall::SC_setsockopt:
-        return current->process().sys$setsockopt((const SC_setsockopt_params*)arg1);
-    case Syscall::SC_create_thread:
-        return current->process().sys$create_thread((int(*)(void*))arg1, (void*)arg2);
-    default:
-        kprintf("<%u> int0x82: Unknown function %u requested {%x, %x, %x}\n", current->process().pid(), function, arg1, arg2, arg3);
-        break;
     }
-    return 0;
+
+    if (function == SC_fork)
+        return process.sys$fork(regs);
+
+    if (function == SC_sigreturn)
+        return process.sys$sigreturn(regs);
+
+    if (function >= Function::__Count) {
+        dbg() << process << ": Unknown syscall %u requested (" << arg1 << ", " << arg2 << ", " << arg3 << ")";
+        return -ENOSYS;
+    }
+
+    if (s_syscall_table[function] == nullptr) {
+        dbg() << process << ": Null syscall " << function << " requested: \"" << to_string((Function)function) << "\", you probably need to rebuild this program.";
+        return -ENOSYS;
+    }
+    return (process.*(s_syscall_table[function]))(arg1, arg2, arg3);
 }
 
 }
 
-void syscall_trap_entry(RegisterDump& regs)
+void syscall_handler(RegisterState regs)
 {
-    dword function = regs.eax;
-    dword arg1 = regs.edx;
-    dword arg2 = regs.ecx;
-    dword arg3 = regs.ebx;
-    regs.eax = Syscall::handle(regs, function, arg1, arg2, arg3);
+    // Special handling of the "gettid" syscall since it's extremely hot.
+    // FIXME: Remove this hack once userspace locks stop calling it so damn much.
+    if (regs.eax == SC_gettid) {
+        regs.eax = Process::current->sys$gettid();
+        Thread::current->did_syscall();
+        return;
+    }
+
+    // Make sure SMAP protection is enabled on syscall entry.
+    clac();
+
+    // Apply a random offset in the range 0-255 to the stack pointer,
+    // to make kernel stacks a bit less deterministic.
+    auto* ptr = (char*)__builtin_alloca(get_fast_random<u8>());
+    asm volatile(""
+                 : "=m"(*ptr));
+
+    auto& process = *Process::current;
+
+    if (!MM.validate_user_stack(process, VirtualAddress(regs.userspace_esp))) {
+        dbgprintf("Invalid stack pointer: %p\n", regs.userspace_esp);
+        handle_crash(regs, "Bad stack on syscall entry", SIGSTKFLT);
+        ASSERT_NOT_REACHED();
+    }
+
+    auto* calling_region = MM.region_from_vaddr(process, VirtualAddress(regs.eip));
+    if (!calling_region) {
+        dbgprintf("Syscall from %p which has no region\n", regs.eip);
+        handle_crash(regs, "Syscall from unknown region", SIGSEGV);
+        ASSERT_NOT_REACHED();
+    }
+
+    if (calling_region->is_writable()) {
+        dbgprintf("Syscall from writable memory at %p\n", regs.eip);
+        handle_crash(regs, "Syscall from writable memory", SIGSEGV);
+        ASSERT_NOT_REACHED();
+    }
+
+    process.big_lock().lock();
+    u32 function = regs.eax;
+    u32 arg1 = regs.edx;
+    u32 arg2 = regs.ecx;
+    u32 arg3 = regs.ebx;
+    regs.eax = (u32)Syscall::handle(regs, function, arg1, arg2, arg3);
+    if (auto* tracer = process.tracer())
+        tracer->did_syscall(function, arg1, arg2, arg3, regs.eax);
+    process.big_lock().unlock();
+
+    // Check if we're supposed to return to userspace or just die.
+    Thread::current->die_if_needed();
+
+    if (Thread::current->has_unmasked_pending_signals())
+        (void)Thread::current->block<Thread::SemiPermanentBlocker>(Thread::SemiPermanentBlocker::Reason::Signal);
 }
 
+}

@@ -1,16 +1,46 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "IRCClient.h"
+#include "IRCAppWindow.h"
 #include "IRCChannel.h"
-#include "IRCQuery.h"
 #include "IRCLogBuffer.h"
+#include "IRCQuery.h"
 #include "IRCWindow.h"
 #include "IRCWindowListModel.h"
-#include <LibGUI/GNotifier.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <AK/QuickSort.h>
+#include <AK/StringBuilder.h>
+#include <LibCore/DateTime.h>
+#include <LibCore/Notifier.h>
 #include <arpa/inet.h>
-#include <unistd.h>
+#include <netinet/in.h>
 #include <stdio.h>
+#include <sys/socket.h>
 #include <time.h>
+#include <unistd.h>
 
 #define IRC_DEBUG
 
@@ -27,18 +57,46 @@ enum IRCNumeric {
     RPL_ENDOFNAMES = 366,
 };
 
-IRCClient::IRCClient(const String& address, int port)
-    : m_hostname(address)
-    , m_port(port)
-    , m_nickname("anon")
+IRCClient::IRCClient()
+    : m_nickname("seren1ty")
     , m_client_window_list_model(IRCWindowListModel::create(*this))
     , m_log(IRCLogBuffer::create())
+    , m_config(Core::ConfigFile::get_for_app("IRCClient"))
 {
-    m_socket = new GTCPSocket(this);
+    m_socket = Core::TCPSocket::construct(this);
+    m_nickname = m_config->read_entry("User", "Nickname", "seren1ty");
+    m_hostname = m_config->read_entry("Connection", "Server", "");
+    m_port = m_config->read_num_entry("Connection", "Port", 6667);
 }
 
 IRCClient::~IRCClient()
 {
+}
+
+void IRCClient::set_server(const String& hostname, int port)
+{
+    m_hostname = hostname;
+    m_port = port;
+    m_config->write_entry("Connection", "Server", hostname);
+    m_config->write_num_entry("Connection", "Port", port);
+    m_config->sync();
+}
+
+void IRCClient::on_socket_connected()
+{
+    m_notifier = Core::Notifier::construct(m_socket->fd(), Core::Notifier::Read);
+    m_notifier->on_ready_to_read = [this] { receive_from_server(); };
+
+    send_user();
+    send_nick();
+
+    auto channel_str = m_config->read_entry("Connection", "AutoJoinChannels", "#test");
+    dbgprintf("IRCClient: Channels to autojoin: %s\n", channel_str.characters());
+    auto channels = channel_str.split(',');
+    for (auto& channel : channels) {
+        join_channel(channel);
+        dbgprintf("IRCClient: Auto joining channel: %s\n", channel.characters());
+    }
 }
 
 bool IRCClient::connect()
@@ -46,26 +104,17 @@ bool IRCClient::connect()
     if (m_socket->is_connected())
         ASSERT_NOT_REACHED();
 
-    IPv4Address ipv4_address(127, 0, 0, 1);
-    bool success = m_socket->connect(GSocketAddress(ipv4_address), m_port);
+    m_socket->on_connected = [this] { on_socket_connected(); };
+    bool success = m_socket->connect(m_hostname, m_port);
     if (!success)
         return false;
-
-    m_notifier = make<GNotifier>(m_socket->fd(), GNotifier::Read);
-    m_notifier->on_ready_to_read = [this] (GNotifier&) { receive_from_server(); };
-
-    send_user();
-    send_nick();
-
-    if (on_connect)
-        on_connect();
     return true;
 }
 
 void IRCClient::receive_from_server()
 {
     while (m_socket->can_read_line()) {
-        auto line = m_socket->read_line(4096);
+        auto line = m_socket->read_line(PAGE_SIZE);
         if (line.is_null()) {
             if (!m_socket->is_connected()) {
                 printf("IRCClient: Connection closed!\n");
@@ -80,9 +129,9 @@ void IRCClient::receive_from_server()
 void IRCClient::process_line(ByteBuffer&& line)
 {
     Message msg;
-    Vector<char> prefix;
-    Vector<char> command;
-    Vector<char> current_parameter;
+    Vector<char, 32> prefix;
+    Vector<char, 32> command;
+    Vector<char, 256> current_parameter;
     enum {
         Start,
         InPrefix,
@@ -90,9 +139,10 @@ void IRCClient::process_line(ByteBuffer&& line)
         InStartOfParameter,
         InParameter,
         InTrailingParameter,
-    } state = Start;
+    } state
+        = Start;
 
-    for (int i = 0; i < line.size(); ++i) {
+    for (size_t i = 0; i < line.size(); ++i) {
         char ch = line[i];
         if (ch == '\r')
             continue;
@@ -143,15 +193,15 @@ void IRCClient::process_line(ByteBuffer&& line)
         }
     }
     if (!current_parameter.is_empty())
-        msg.arguments.append(String(current_parameter.data(), current_parameter.size()));
-    msg.prefix = String(prefix.data(), prefix.size());
-    msg.command = String(command.data(), command.size());
-    handle(msg, String(m_line_buffer.data(), m_line_buffer.size()));
+        msg.arguments.append(String::copy(current_parameter));
+    msg.prefix = String::copy(prefix);
+    msg.command = String::copy(command);
+    handle(msg);
 }
 
 void IRCClient::send(const String& text)
 {
-    if (!m_socket->send(ByteBuffer::wrap((void*)text.characters(), text.length()))) {
+    if (!m_socket->send(ByteBuffer::wrap(text.characters(), text.length()))) {
         perror("send");
         exit(1);
     }
@@ -188,14 +238,13 @@ void IRCClient::send_whois(const String& nick)
     send(String::format("WHOIS %s\r\n", nick.characters()));
 }
 
-void IRCClient::handle(const Message& msg, const String&)
+void IRCClient::handle(const Message& msg)
 {
 #ifdef IRC_DEBUG
     printf("IRCClient::execute: prefix='%s', command='%s', arguments=%d\n",
         msg.prefix.characters(),
         msg.command.characters(),
-        msg.arguments.size()
-    );
+        msg.arguments.size());
 
     int i = 0;
     for (auto& arg : msg.arguments) {
@@ -209,16 +258,26 @@ void IRCClient::handle(const Message& msg, const String&)
 
     if (is_numeric) {
         switch (numeric) {
-        case RPL_WHOISCHANNELS: return handle_rpl_whoischannels(msg);
-        case RPL_ENDOFWHOIS: return handle_rpl_endofwhois(msg);
-        case RPL_WHOISOPERATOR: return handle_rpl_whoisoperator(msg);
-        case RPL_WHOISSERVER: return handle_rpl_whoisserver(msg);
-        case RPL_WHOISUSER: return handle_rpl_whoisuser(msg);
-        case RPL_WHOISIDLE: return handle_rpl_whoisidle(msg);
-        case RPL_TOPICWHOTIME: return handle_rpl_topicwhotime(msg);
-        case RPL_TOPIC: return handle_rpl_topic(msg);
-        case RPL_NAMREPLY: return handle_rpl_namreply(msg);
-        case RPL_ENDOFNAMES: return handle_rpl_endofnames(msg);
+        case RPL_WHOISCHANNELS:
+            return handle_rpl_whoischannels(msg);
+        case RPL_ENDOFWHOIS:
+            return handle_rpl_endofwhois(msg);
+        case RPL_WHOISOPERATOR:
+            return handle_rpl_whoisoperator(msg);
+        case RPL_WHOISSERVER:
+            return handle_rpl_whoisserver(msg);
+        case RPL_WHOISUSER:
+            return handle_rpl_whoisuser(msg);
+        case RPL_WHOISIDLE:
+            return handle_rpl_whoisidle(msg);
+        case RPL_TOPICWHOTIME:
+            return handle_rpl_topicwhotime(msg);
+        case RPL_TOPIC:
+            return handle_rpl_topic(msg);
+        case RPL_NAMREPLY:
+            return handle_rpl_namreply(msg);
+        case RPL_ENDOFNAMES:
+            return handle_rpl_endofnames(msg);
         }
     }
 
@@ -235,7 +294,10 @@ void IRCClient::handle(const Message& msg, const String&)
         return handle_topic(msg);
 
     if (msg.command == "PRIVMSG")
-        return handle_privmsg(msg);
+        return handle_privmsg_or_notice(msg, PrivmsgOrNotice::Privmsg);
+
+    if (msg.command == "NOTICE")
+        return handle_privmsg_or_notice(msg, PrivmsgOrNotice::Notice);
 
     if (msg.command == "NICK")
         return handle_nick(msg);
@@ -244,15 +306,20 @@ void IRCClient::handle(const Message& msg, const String&)
         add_server_message(String::format("[%s] %s", msg.command.characters(), msg.arguments[1].characters()));
 }
 
-void IRCClient::add_server_message(const String& text)
+void IRCClient::add_server_message(const String& text, Color color)
 {
-    m_log->add_message(0, "", text);
+    m_log->add_message(0, "", text, color);
     m_server_subwindow->did_add_message();
 }
 
 void IRCClient::send_privmsg(const String& target, const String& text)
 {
     send(String::format("PRIVMSG %s :%s\r\n", target.characters(), text.characters()));
+}
+
+void IRCClient::send_notice(const String& target, const String& text)
+{
+    send(String::format("NOTICE %s :%s\r\n", target.characters(), text.characters()));
 }
 
 void IRCClient::handle_user_input_in_channel(const String& channel_name, const String& input)
@@ -294,7 +361,12 @@ bool IRCClient::is_nick_prefix(char ch) const
     return false;
 }
 
-void IRCClient::handle_privmsg(const Message& msg)
+static bool has_ctcp_payload(const StringView& string)
+{
+    return string.length() >= 2 && string[0] == 0x01 && string[string.length() - 1] == 0x01;
+}
+
+void IRCClient::handle_privmsg_or_notice(const Message& msg, PrivmsgOrNotice type)
 {
     if (msg.arguments.size() < 2)
         return;
@@ -304,8 +376,14 @@ void IRCClient::handle_privmsg(const Message& msg)
     auto sender_nick = parts[0];
     auto target = msg.arguments[0];
 
+    bool is_ctcp = has_ctcp_payload(msg.arguments[1]);
+
 #ifdef IRC_DEBUG
-    printf("handle_privmsg: sender_nick='%s', target='%s'\n", sender_nick.characters(), target.characters());
+    printf("handle_privmsg_or_notice: type='%s'%s, sender_nick='%s', target='%s'\n",
+        type == PrivmsgOrNotice::Privmsg ? "privmsg" : "notice",
+        is_ctcp ? " (ctcp)" : "",
+        sender_nick.characters(),
+        target.characters());
 #endif
 
     if (sender_nick.is_empty())
@@ -317,15 +395,48 @@ void IRCClient::handle_privmsg(const Message& msg)
         sender_nick = sender_nick.substring(1, sender_nick.length() - 1);
     }
 
+    String message_text = msg.arguments[1];
+    auto message_color = Color::Black;
+
+    if (is_ctcp) {
+        auto ctcp_payload = msg.arguments[1].substring_view(1, msg.arguments[1].length() - 2);
+        if (type == PrivmsgOrNotice::Privmsg)
+            handle_ctcp_request(sender_nick, ctcp_payload);
+        else
+            handle_ctcp_response(sender_nick, ctcp_payload);
+        StringBuilder builder;
+        builder.append("(CTCP) ");
+        builder.append(ctcp_payload);
+        message_text = builder.to_string();
+        message_color = Color::Blue;
+    }
+
     {
         auto it = m_channels.find(target);
         if (it != m_channels.end()) {
-            (*it).value->add_message(sender_prefix, sender_nick, msg.arguments[1]);
+            (*it).value->add_message(sender_prefix, sender_nick, message_text, message_color);
             return;
         }
     }
-    auto& query = ensure_query(sender_nick);
-    query.add_message(sender_prefix, sender_nick, msg.arguments[1]);
+
+    // For NOTICE or CTCP messages, only put them in query if one already exists.
+    // Otherwise, put them in the server window. This seems to match other clients.
+    IRCQuery* query = nullptr;
+    if (is_ctcp || type == PrivmsgOrNotice::Notice) {
+        query = query_with_name(sender_nick);
+    } else {
+        query = &ensure_query(sender_nick);
+    }
+    if (query)
+        query->add_message(sender_prefix, sender_nick, message_text, message_color);
+    else {
+        add_server_message(String::format("<%s> %s", sender_nick.characters(), message_text.characters()), message_color);
+    }
+}
+
+IRCQuery* IRCClient::query_with_name(const String& name)
+{
+    return const_cast<IRCQuery*>(m_queries.get(name).value_or(nullptr));
 }
 
 IRCQuery& IRCClient::ensure_query(const String& name)
@@ -335,7 +446,7 @@ IRCQuery& IRCClient::ensure_query(const String& name)
         return *(*it).value;
     auto query = IRCQuery::create(*this, name);
     auto& query_reference = *query;
-    m_queries.set(name, query.copy_ref());
+    m_queries.set(name, query);
     return query_reference;
 }
 
@@ -346,7 +457,7 @@ IRCChannel& IRCClient::ensure_channel(const String& name)
         return *(*it).value;
     auto channel = IRCChannel::create(*this, name);
     auto& channel_reference = *channel;
-    m_channels.set(name, channel.copy_ref());
+    m_channels.set(name, channel);
     return channel_reference;
 }
 
@@ -419,7 +530,7 @@ void IRCClient::handle_rpl_topic(const Message& msg)
         return;
     auto& channel_name = msg.arguments[1];
     auto& topic = msg.arguments[2];
-    ensure_channel(channel_name).handle_topic({ }, topic);
+    ensure_channel(channel_name).handle_topic({}, topic);
     // FIXME: Handle RPL_TOPICWHOTIME so we can know who set it and when.
 }
 
@@ -430,6 +541,11 @@ void IRCClient::handle_rpl_namreply(const Message& msg)
     auto& channel_name = msg.arguments[2];
     auto& channel = ensure_channel(channel_name);
     auto members = msg.arguments[3].split(' ');
+
+    quick_sort(members.begin(), members.end(), [](auto& a, auto& b) {
+        return strcasecmp(a.characters(), b.characters()) < 0;
+    });
+
     for (auto& member : members) {
         if (member.is_empty())
             continue;
@@ -480,8 +596,7 @@ void IRCClient::handle_rpl_whoisuser(const Message& msg)
         nick.characters(),
         username.characters(),
         host.characters(),
-        realname.characters()
-    ));
+        realname.characters()));
 }
 
 void IRCClient::handle_rpl_whoisidle(const Message& msg)
@@ -511,17 +626,8 @@ void IRCClient::handle_rpl_topicwhotime(const Message& msg)
     auto setat = msg.arguments[3];
     bool ok;
     time_t setat_time = setat.to_uint(ok);
-    if (ok) {
-        auto* tm = localtime(&setat_time);
-        setat = String::format("%4u-%02u-%02u %02u:%02u:%02u",
-            tm->tm_year + 1900,
-            tm->tm_mon + 1,
-            tm->tm_mday,
-            tm->tm_hour,
-            tm->tm_min,
-            tm->tm_sec
-        );
-    }
+    if (ok)
+        setat = Core::DateTime::from_timestamp(setat_time).to_string();
     ensure_channel(channel_name).add_message(String::format("*** (set by %s at %s)", nick.characters(), setat.characters()), Color::Blue);
 }
 
@@ -551,10 +657,10 @@ void IRCClient::unregister_subwindow(IRCWindow& subwindow)
 
 void IRCClient::handle_user_command(const String& input)
 {
-    auto parts = input.split(' ');
+    auto parts = input.split_view(' ');
     if (parts.is_empty())
         return;
-    auto command = parts[0].to_uppercase();
+    auto command = String(parts[0]).to_uppercase();
     if (command == "/NICK") {
         if (parts.size() >= 2)
             change_nick(parts[1]);
@@ -571,8 +677,19 @@ void IRCClient::handle_user_command(const String& input)
         return;
     }
     if (command == "/QUERY") {
-        if (parts.size() >= 2)
-            ensure_query(parts[1]);
+        if (parts.size() >= 2) {
+            auto& query = ensure_query(parts[1]);
+            IRCAppWindow::the().set_active_window(query.window());
+        }
+        return;
+    }
+    if (command == "/MSG") {
+        if (parts.size() < 3)
+            return;
+        auto nick = parts[1];
+        auto& query = ensure_query(nick);
+        IRCAppWindow::the().set_active_window(query.window());
+        query.say(input.view().substring_view_starting_after_substring(nick));
         return;
     }
     if (command == "/WHOIS") {
@@ -616,4 +733,40 @@ void IRCClient::handle_join_action(const String& channel)
 void IRCClient::handle_part_action(const String& channel)
 {
     part_channel(channel);
+}
+
+void IRCClient::did_part_from_channel(Badge<IRCChannel>, IRCChannel& channel)
+{
+    if (on_part_from_channel)
+        on_part_from_channel(channel);
+}
+
+void IRCClient::send_ctcp_response(const StringView& peer, const StringView& payload)
+{
+    StringBuilder builder;
+    builder.append(0x01);
+    builder.append(payload);
+    builder.append(0x01);
+    auto message = builder.to_string();
+    send_notice(peer, message);
+}
+
+void IRCClient::handle_ctcp_request(const StringView& peer, const StringView& payload)
+{
+    dbg() << "handle_ctcp_request: " << payload;
+
+    if (payload == "VERSION") {
+        send_ctcp_response(peer, "VERSION IRC Client [x86] / Serenity OS");
+        return;
+    }
+
+    if (payload.starts_with("PING")) {
+        send_ctcp_response(peer, payload);
+        return;
+    }
+}
+
+void IRCClient::handle_ctcp_response(const StringView& peer, const StringView& payload)
+{
+    dbg() << "handle_ctcp_response(" << peer << "): " << payload;
 }

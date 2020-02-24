@@ -1,83 +1,41 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <errno.h>
-#include <string.h>
-#include <getopt.h>
-#include <fcntl.h>
-#include <AK/AKString.h>
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
-
-static bool flag_show_all = false;
-static int show_all();
-static int handle_var(const char*);
-
-static void usage()
-{
-    printf("usage: sysctl [-a] [variable[=value]]\n");
-}
-
-int main(int argc, char** argv)
-{
-    int opt;
-    while ((opt = getopt(argc, argv, "a")) != -1) {
-        switch (opt) {
-        case 'a':
-            flag_show_all = true;
-            break;
-        default:
-            usage();
-            return 0;
-        }
-    }
-
-    if (flag_show_all)
-        return show_all();
-
-    if (optind >= argc) {
-        usage();
-        return 0;
-    }
-
-    const char* var = argv[optind];
-
-    return handle_var(var);
-}
-
-int show_all()
-{
-    DIR* dirp = opendir("/proc/sys");
-    if (!dirp) {
-        perror("opendir");
-        return 1;
-    }
-    char pathbuf[PATH_MAX];
-
-    while (auto* de = readdir(dirp)) {
-        if (de->d_name[0] == '.')
-            continue;
-        sprintf(pathbuf, "/proc/sys/%s", de->d_name);
-        int fd = open(pathbuf, O_RDONLY);
-        if (fd < 0) {
-            perror("open");
-            continue;
-        }
-        char buffer[1024];
-        int nread = read(fd, buffer, sizeof(buffer));
-        close(fd);
-        if (nread < 0) {
-            perror("read");
-            continue;
-        }
-        buffer[nread] = '\0';
-        printf("%s = %s", de->d_name, buffer);
-        if (nread && buffer[nread - 1] != '\n')
-            printf("\n");
-    }
-    closedir(dirp);
-    return 0;
-}
+#include <LibCore/ArgsParser.h>
+#include <LibCore/DirIterator.h>
+#include <LibCore/File.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 
 static String read_var(const String& name)
 {
@@ -85,19 +43,17 @@ static String read_var(const String& name)
     builder.append("/proc/sys/");
     builder.append(name);
     auto path = builder.to_string();
-    int fd = open(path.characters(), O_RDONLY);
-    if (fd < 0) {
-        perror("open");
+    auto f = Core::File::construct(path);
+    if (!f->open(Core::IODevice::ReadOnly)) {
+        fprintf(stderr, "open: %s", f->error_string());
         exit(1);
     }
-    char buffer[1024];
-    int nread = read(fd, buffer, sizeof(buffer));
-    close(fd);
-    if (nread < 0) {
-        perror("read");
+    const auto& b = f->read_all();
+    if (f->error() < 0) {
+        fprintf(stderr, "read: %s", f->error_string());
         exit(1);
     }
-    return String(buffer, nread, Chomp);
+    return String((const char*)b.data(), b.size(), Chomp);
 }
 
 static void write_var(const String& name, const String& value)
@@ -106,22 +62,36 @@ static void write_var(const String& name, const String& value)
     builder.append("/proc/sys/");
     builder.append(name);
     auto path = builder.to_string();
-    int fd = open(path.characters(), O_WRONLY);
-    if (fd < 0) {
-        perror("open");
+    auto f = Core::File::construct(path);
+    if (!f->open(Core::IODevice::WriteOnly)) {
+        fprintf(stderr, "open: %s", f->error_string());
         exit(1);
     }
-    int nwritten = write(fd, value.characters(), value.length());
-    if (nwritten < 0) {
-        perror("read");
+    f->write(value);
+    if (f->error() < 0) {
+        fprintf(stderr, "write: %s", f->error_string());
         exit(1);
     }
-    close(fd);
 }
 
-int handle_var(const char* var)
+static int handle_show_all()
 {
-    String spec(var, Chomp);
+    Core::DirIterator di("/proc/sys", Core::DirIterator::SkipDots);
+    if (di.has_error()) {
+        fprintf(stderr, "CDirIterator: %s\n", di.error_string());
+        return 1;
+    }
+
+    while (di.has_next()) {
+        String variable_name = di.next_path();
+        printf("%s = %s\n", variable_name.characters(), read_var(variable_name).characters());
+    }
+    return 0;
+}
+
+static int handle_var(const String& var)
+{
+    String spec(var.characters(), Chomp);
     auto parts = spec.split('=');
     String variable_name = parts[0];
     bool is_write = parts.size() > 1;
@@ -135,4 +105,21 @@ int handle_var(const char* var)
     write_var(variable_name, parts[1]);
     printf(" -> %s\n", read_var(variable_name).characters());
     return 0;
+}
+
+int main(int argc, char** argv)
+{
+    bool show_all = false;
+    const char* var = nullptr;
+
+    Core::ArgsParser args_parser;
+    args_parser.add_option(show_all, "Show all variables", nullptr, 'a');
+    args_parser.add_positional_argument(var, "Command (var[=value])", "command");
+    args_parser.parse(argc, argv);
+
+    if (show_all) {
+        return handle_show_all();
+    }
+
+    return handle_var(var);
 }

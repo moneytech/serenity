@@ -1,44 +1,45 @@
-/* The bootloader will look at this image and start execution at the symbol
-   designated as the entry point. */
-ENTRY(_start)
+ENTRY(start)
 
-/* Tell where the various sections of the object files will be put in the final
-   kernel image. */
 SECTIONS
 {
-	/* Begin putting sections at 1 MiB, a conventional place for kernels to be
-	   loaded at by the bootloader. */
-	. = 0x10000;
+    . = 0xc0100000;
 
-	/* First put the multiboot header, as it is required to be put very early
-	   early in the image or the bootloader won't recognize the file format.
-	   Next we'll put the .text section. */
-	.text BLOCK(4K) : ALIGN(4K)
-	{
-        _start.o
-		*(.multiboot)
-		*(.text)
-	}
+    start_of_kernel_image = .;
 
-	/* Read-only data. */
-	.rodata BLOCK(4K) : ALIGN(4K)
-	{
-		*(.rodata)
-	}
+    .text ALIGN(4K) : AT (ADDR(.text) - 0xc0000000)
+    {
+        Arch/i386/Boot/boot.ao
+        *(.multiboot)
+        start_of_kernel_text = .;
+        *(.text)
+        *(.text.startup)
+        end_of_kernel_text = .;
+    }
 
-	/* Read-write data (initialized) */
-	.data BLOCK(4K) : ALIGN(4K)
-	{
-		*(.data)
-	}
+    .rodata ALIGN(4K) : AT (ADDR(.rodata) - 0xc0000000)
+    {
+        start_ctors = .;
+        *(.ctors)
+        end_ctors = .;
 
-	/* Read-write data (uninitialized) and stack */
-	.bss BLOCK(4K) : ALIGN(4K)
-	{
-		*(COMMON)
-		*(.bss)
-	}
+        *(.rodata)
+    }
 
-	/* The compiler may produce other sections, by default it will put them in
-	   a segment with the same name. Simply add stuff here as needed. */
+    .data ALIGN(4K) : AT (ADDR(.data) - 0xc0000000)
+    {
+        start_of_kernel_data = .;
+        *(.data)
+        end_of_kernel_data = .;
+    }
+
+    .bss ALIGN(4K) : AT (ADDR(.bss) - 0xc0000000)
+    {
+        start_of_kernel_bss = .;
+        *(page_tables)
+        *(COMMON)
+        *(.bss)
+        end_of_kernel_bss = .;
+    }
+
+    end_of_kernel_image = .;
 }

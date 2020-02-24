@@ -1,37 +1,107 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "IRCLogBuffer.h"
-#include "IRCLogBufferModel.h"
+#include <AK/StringBuilder.h>
+#include <LibHTML/DOM/DocumentFragment.h>
+#include <LibHTML/DOM/DocumentType.h>
+#include <LibHTML/DOM/ElementFactory.h>
+#include <LibHTML/DOM/HTMLBodyElement.h>
+#include <LibHTML/DOM/Text.h>
+#include <LibHTML/Dump.h>
+#include <LibHTML/Parser/HTMLParser.h>
 #include <stdio.h>
 #include <time.h>
 
-Retained<IRCLogBuffer> IRCLogBuffer::create()
+NonnullRefPtr<IRCLogBuffer> IRCLogBuffer::create()
 {
     return adopt(*new IRCLogBuffer);
 }
 
 IRCLogBuffer::IRCLogBuffer()
-    : m_model(IRCLogBufferModel::create(*this))
 {
+    m_document = adopt(*new Document);
+    m_document->append_child(adopt(*new DocumentType(document())));
+    auto html_element = create_element(document(), "html");
+    m_document->append_child(html_element);
+    auto head_element = create_element(document(), "head");
+    html_element->append_child(head_element);
+    auto style_element = create_element(document(), "style");
+    style_element->append_child(adopt(*new Text(document(), "div { font-family: Csilla; font-weight: lighter; }")));
+    head_element->append_child(style_element);
+    auto body_element = create_element(document(), "body");
+    html_element->append_child(body_element);
+    m_container_element = body_element;
 }
 
 IRCLogBuffer::~IRCLogBuffer()
 {
 }
 
+static String timestamp_string()
+{
+    auto now = time(nullptr);
+    auto* tm = localtime(&now);
+    return String::format("%02u:%02u:%02u ", tm->tm_hour, tm->tm_min, tm->tm_sec);
+}
+
 void IRCLogBuffer::add_message(char prefix, const String& name, const String& text, Color color)
 {
-    m_messages.enqueue({ time(nullptr), prefix, name, text, color });
-    m_model->update();
+    auto nick_string = String::format("<%c%s> ", prefix ? prefix : ' ', name.characters());
+    auto html = String::format(
+        "<div style=\"color: %s\">"
+        "<span>%s</span>"
+        "<b>%s</b>"
+        "<span>%s</span>"
+        "</div>",
+        color.to_string().characters(),
+        timestamp_string().characters(),
+        escape_html_entities(nick_string).characters(),
+        escape_html_entities(text).characters());
+    auto fragment = parse_html_fragment(*m_document, html);
+    m_container_element->append_child(fragment->remove_child(*fragment->first_child()));
+    m_document->force_layout();
 }
 
 void IRCLogBuffer::add_message(const String& text, Color color)
 {
-    m_messages.enqueue({ time(nullptr), '\0', String(), text, color });
-    m_model->update();
+    auto html = String::format(
+        "<div style=\"color: %s\">"
+        "<span>%s</span>"
+        "<span>%s</span>"
+        "</div>",
+        color.to_string().characters(),
+        timestamp_string().characters(),
+        escape_html_entities(text).characters());
+    auto fragment = parse_html_fragment(*m_document, html);
+    m_container_element->append_child(fragment->remove_child(*fragment->first_child()));
+    m_document->force_layout();
 }
 
 void IRCLogBuffer::dump() const
 {
-    for (auto& message : m_messages) {
-        printf("%u <%c%8s> %s\n", message.timestamp, message.prefix, message.sender.characters(), message.text.characters());
-    }
+    // FIXME: Remove me?
 }

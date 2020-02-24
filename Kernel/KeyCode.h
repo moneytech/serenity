@@ -1,8 +1,34 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #pragma once
 
 #include <AK/Types.h>
 
-enum KeyCode : byte {
+enum KeyCode : u8 {
     Key_Invalid = 0,
     Key_Escape,
     Key_Tab,
@@ -20,7 +46,8 @@ enum KeyCode : byte {
     Key_Down,
     Key_PageUp,
     Key_PageDown,
-    Key_Shift,
+    Key_LeftShift,
+    Key_RightShift,
     Key_Control,
     Key_Alt,
     Key_CapsLock,
@@ -108,26 +135,32 @@ enum KeyCode : byte {
     Key_Tilde,
     Key_Backtick,
     Key_Logo,
+
+    Key_Shift = Key_LeftShift,
 };
+const int key_code_count = Key_Logo;
 
 enum KeyModifier {
+    Mod_None = 0x00,
     Mod_Alt = 0x01,
     Mod_Ctrl = 0x02,
     Mod_Shift = 0x04,
     Mod_Logo = 0x08,
-    Mod_Mask = 0x0f,
+    Mod_AltGr = 0x10,
+    Mod_Mask = 0x1f,
 
     Is_Press = 0x80,
 };
 
 struct KeyEvent {
     KeyCode key { Key_Invalid };
-    byte character { 0 };
-    byte flags { 0 };
+    u8 character { 0 };
+    u8 flags { 0 };
     bool alt() const { return flags & Mod_Alt; }
     bool ctrl() const { return flags & Mod_Ctrl; }
     bool shift() const { return flags & Mod_Shift; }
     bool logo() const { return flags & Mod_Logo; }
+    bool altgr() const { return flags & Mod_AltGr; }
     unsigned modifiers() const { return flags & Mod_Mask; }
     bool is_press() const { return flags & Is_Press; }
 };

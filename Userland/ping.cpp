@@ -1,17 +1,43 @@
-#include <sys/socket.h>
-#include <sys/time.h>
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <arpa/inet.h>
-#include <netinet/ip_icmp.h>
+#include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/ip_icmp.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 uint16_t internet_checksum(const void* ptr, size_t count)
 {
-    uint32_t  checksum = 0;
+    uint32_t checksum = 0;
     auto* w = (const uint16_t*)ptr;
     while (count > 1) {
         checksum += ntohs(*w++);
@@ -24,18 +50,13 @@ uint16_t internet_checksum(const void* ptr, size_t count)
     return htons(~checksum);
 }
 
-inline void timersub(struct timeval* a, struct timeval* b, struct timeval* result)
-{
-    result->tv_sec = a->tv_sec - b->tv_sec;
-    result->tv_usec = a->tv_usec - b->tv_usec;
-    if (result->tv_usec < 0) {
-        --result->tv_sec;
-        result->tv_usec += 1000000;
-    }
-}
-
 int main(int argc, char** argv)
 {
+    if (pledge("stdio id inet dns", nullptr) < 0) {
+        perror("pledge");
+        return 1;
+    }
+
     if (argc != 2) {
         printf("usage: ping <host>\n");
         return 0;
@@ -47,7 +68,19 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    struct timeval timeout { 1, 0 };
+    if (setgid(getgid()) || setuid(getuid())) {
+        fprintf(stderr, "Failed to drop privileges.\n");
+        return 1;
+    }
+
+    if (pledge("stdio inet dns", nullptr) < 0) {
+        perror("pledge");
+        return 1;
+    }
+
+    struct timeval timeout {
+        1, 0
+    };
     int rc = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if (rc < 0) {
         perror("setsockopt");
@@ -57,6 +90,11 @@ int main(int argc, char** argv)
     auto* hostent = gethostbyname(argv[1]);
     if (!hostent) {
         printf("Lookup failed for '%s'\n", argv[1]);
+        return 1;
+    }
+
+    if (pledge("stdio inet", nullptr) < 0) {
+        perror("pledge");
         return 1;
     }
 
@@ -131,8 +169,7 @@ int main(int argc, char** argv)
                 ntohs(pong_packet.header.un.echo.id),
                 ntohs(pong_packet.header.un.echo.sequence),
                 pong_packet.header.un.echo.sequence != ping_packet.header.un.echo.sequence ? "(!)" : "",
-                ms
-            );
+                ms);
 
             // If this was a response to an earlier packet, we still need to wait for the current one.
             if (pong_packet.header.un.echo.sequence != ping_packet.header.un.echo.sequence)

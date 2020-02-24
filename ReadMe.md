@@ -1,56 +1,93 @@
-# Serenity
+# SerenityOS
 
-x86 Unix-like operating system for IBM PC-compatibles.
+Graphical Unix-like operating system for x86 computers.
+
+![Travis CI status](https://api.travis-ci.com/SerenityOS/serenity.svg?branch=master)
 
 ## About
 
-I always wondered what it would be like to write my own operating system, but I never took it seriously. Until now.
+SerenityOS is a love letter to '90s user interfaces with a custom Unix-like core. It flatters with sincerity by stealing beautiful ideas from various other systems.
 
-I've grown tired of cutesy and condescending software that doesn't take itself or the user seriously. This is my effort to bring back the feeling of computing I once knew.
+Roughly speaking, the goal is a marriage between the aesthetic of late-1990s productivity software and the power-user accessibility of late-2000s \*nix. This is a system by us, for us, based on the things we like.
 
-Roughly speaking, the goal here is a marriage between the aesthetic of late-1990s productivity software and the power-user accessibility of late-2000s \*nix. This is a system by me, for me, based on the things I like.
+I (Andreas) regularly post raw hacking sessions and demos on [my YouTube channel](https://www.youtube.com/c/AndreasKling/).
+
+Sometimes I write about the system on [my github.io blog](https://awesomekling.github.io/).
+
+I'm also on [Patreon](https://www.patreon.com/serenityos) and [GitHub Sponsors](https://github.com/sponsors/awesomekling) if you would like to show some support that way.
 
 ## Screenshot
 
-![Screenshot as of cdb82f6](https://raw.githubusercontent.com/awesomekling/serenity/master/Meta/screenshot-cdb82f6.png)
+![Screenshot as of 1133aca](https://raw.githubusercontent.com/SerenityOS/serenity/master/Meta/screenshot-1133aca.png)
 
-## Current features
+## Kernel features
 
-* Pre-emptive multitasking
-* Compositing window server
-* IPv4 networking with ARP, TCP, UDP and ICMP
+* x86 (32-bit) kernel with pre-emptive multi-threading
+* Hardware protections (SMEP, SMAP, UMIP, NX, WP, TSD, ...)
+* IPv4 stack with ARP, TCP, UDP and ICMP protocols
 * ext2 filesystem
-* Unix-like libc and userland
-* mmap()
+* POSIX signals
+* Purgeable memory
 * /proc filesystem
-* Local sockets
-* Pseudoterminals
-* Event-driven GUI library
-* Text editor
+* Pseudoterminals (with /dev/pts filesystem)
+* Filesystem notifications
+* CPU and memory profiling
+* SoundBlaster 16 driver
+* VMWare/QEMU mouse integration
+
+## System services
+
+* Launch/session daemon (SystemServer)
+* Compositing window server (WindowServer)
+* DNS client (LookupServer)
+* Software-mixing sound daemon (AudioServer)
+
+## Libraries
+
+* C++ templates and containers (AK)
+* Event loop and utilities (LibCore)
+* 2D graphics library (LibGfx)
+* GUI toolkit (LibGUI)
+* Cross-process communication library (LibIPC)
+* HTML/CSS engine (LibHTML)
+* Markdown (LibMarkdown)
+* Audio (LibAudio)
+* PCI database (LibPCIDB)
+* Terminal emulation (LibVT)
+* Network protocols (HTTP) (LibProtocol)
+
+## Userland features
+
+* Unix-like libc and userland
+* Shell with pipes and I/O redirection
+* On-line help system (both terminal and GUI variants)
+* Web browser (Browser)
+* C++ IDE (HackStudio)
 * IRC client
-* DNS lookup
-* Other stuff I can't think of right now...
+* Desktop synthesizer (Piano)
+* Various desktop apps & games
+* Color themes
 
 ## How do I build and run this?
 
-You need a freestanding cross-compiler for the i686-elf target (for the kernel) and another
-cross-compiler for the i686-pc-serenity target (for all the userspace stuff.) It's probably possible to coerce it into building with vanilla gcc/clang if you pass all the right compiler flags, but I haven't been doing that for a while.
+See the [SerenityOS build instructions](https://github.com/SerenityOS/serenity/blob/master/Documentation/BuildInstructions.md)
 
-There's [a helpful guide on building a GCC cross-compiler](https://wiki.osdev.org/GCC_Cross-Compiler) on the OSDev wiki.
+## Wanna chat?
 
-I've only tested this on an Ubuntu 18.10 host with GCC 8.2.0, so I'm not sure it works anywhere else.
-
-If you'd like to run it, here's how you'd get it to boot:
-
-    cd Kernel
-    ./makeall.sh
-    ./run            # Runs in QEMU
-    ./run b          # Runs in bochs (limited networking support)
+Come hang out with us in `#serenityos` on the Freenode IRC network.
 
 ## Author
 
-* **Andreas Kling** - [awesomekling](https://github.com/awesomekling)
+* **Andreas Kling** - [awesomekling](https://twitter.com/awesomekling)
+
+## Contributors
+
+* **Robin Burchell** - [rburchell](https://github.com/rburchell)
+* **Conrad Pankoff** - [deoxxa](https://github.com/deoxxa)
+* **Sergey Bugaev** - [bugaevc](https://github.com/bugaevc)
+
+(And many more!) Feel free to append yourself here if you've made some sweet contributions. :)
 
 ## License
 
-Undecided. Probably something close to 2-clause BSD.
+SerenityOS is licensed under a 2-clause BSD license.

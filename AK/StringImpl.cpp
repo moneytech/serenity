@@ -1,7 +1,37 @@
+/*
+ * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "StringImpl.h"
+#include "HashTable.h"
 #include "StdLibExtras.h"
 #include "kmalloc.h"
-#include "HashTable.h"
+
+#ifndef __serenity__
+#include <new>
+#endif
 
 //#define DEBUG_STRINGIMPL
 
@@ -13,7 +43,7 @@ void dump_all_stringimpls()
 {
     unsigned i = 0;
     for (auto& it : *g_all_live_stringimpls) {
-        dbgprintf("%u: \"%s\"\n", i, (*it).characters());
+        dbgprsize_tf("%u: \"%s\"\n", i, (*it).characters());
         ++i;
     }
 }
@@ -25,14 +55,15 @@ static StringImpl* s_the_empty_stringimpl = nullptr;
 
 StringImpl& StringImpl::the_empty_stringimpl()
 {
-    if (!s_the_empty_stringimpl)
-        s_the_empty_stringimpl = new StringImpl(ConstructTheEmptyStringImpl);;
+    if (!s_the_empty_stringimpl) {
+        void* slot = kmalloc(sizeof(StringImpl) + sizeof(char));
+        s_the_empty_stringimpl = new (slot) StringImpl(ConstructTheEmptyStringImpl);
+    }
     return *s_the_empty_stringimpl;
 }
 
-StringImpl::StringImpl(ConstructWithInlineBufferTag, ssize_t length)
+StringImpl::StringImpl(ConstructWithInlineBufferTag, size_t length)
     : m_length(length)
-    , m_characters(m_inline_buffer)
 {
 #ifdef DEBUG_STRINGIMPL
     if (!g_all_live_stringimpls)
@@ -50,29 +81,39 @@ StringImpl::~StringImpl()
 #endif
 }
 
-static inline ssize_t allocation_size_for_stringimpl(ssize_t length)
+static inline size_t allocation_size_for_stringimpl(size_t length)
 {
     return sizeof(StringImpl) + (sizeof(char) * length) + sizeof(char);
 }
 
-Retained<StringImpl> StringImpl::create_uninitialized(ssize_t length, char*& buffer)
+NonnullRefPtr<StringImpl> StringImpl::create_uninitialized(size_t length, char*& buffer)
 {
     ASSERT(length);
     void* slot = kmalloc(allocation_size_for_stringimpl(length));
     ASSERT(slot);
     auto new_stringimpl = adopt(*new (slot) StringImpl(ConstructWithInlineBuffer, length));
-    buffer = const_cast<char*>(new_stringimpl->m_characters);
+    buffer = const_cast<char*>(new_stringimpl->characters());
     buffer[length] = '\0';
     return new_stringimpl;
 }
 
-RetainPtr<StringImpl> StringImpl::create(const char* cstring, ssize_t length, ShouldChomp shouldChomp)
+RefPtr<StringImpl> StringImpl::create(const char* cstring, size_t length, ShouldChomp should_chomp)
 {
     if (!cstring)
         return nullptr;
 
-    if (!*cstring)
+    if (!length || !*cstring)
         return the_empty_stringimpl();
+
+    if (should_chomp) {
+        while (length) {
+            char last_ch = cstring[length - 1];
+            if (!last_ch || last_ch == '\n' || last_ch == '\r')
+                --length;
+            else
+                break;
+        }
+    }
 
     if (!length)
         return the_empty_stringimpl();
@@ -81,15 +122,10 @@ RetainPtr<StringImpl> StringImpl::create(const char* cstring, ssize_t length, Sh
     auto new_stringimpl = create_uninitialized(length, buffer);
     memcpy(buffer, cstring, length * sizeof(char));
 
-    if (shouldChomp && buffer[length - 1] == '\n') {
-        buffer[length - 1] = '\0';
-        --new_stringimpl->m_length;
-    }
-
     return new_stringimpl;
 }
 
-RetainPtr<StringImpl> StringImpl::create(const char* cstring, ShouldChomp shouldChomp)
+RefPtr<StringImpl> StringImpl::create(const char* cstring, ShouldChomp shouldChomp)
 {
     if (!cstring)
         return nullptr;
@@ -121,10 +157,10 @@ static inline char to_ascii_uppercase(char c)
     return c;
 }
 
-Retained<StringImpl> StringImpl::to_lowercase() const
+NonnullRefPtr<StringImpl> StringImpl::to_lowercase() const
 {
-    for (ssize_t i = 0; i < m_length; ++i) {
-        if (!is_ascii_lowercase(m_characters[i]))
+    for (size_t i = 0; i < m_length; ++i) {
+        if (!is_ascii_lowercase(characters()[i]))
             goto slow_path;
     }
     return const_cast<StringImpl&>(*this);
@@ -132,15 +168,15 @@ Retained<StringImpl> StringImpl::to_lowercase() const
 slow_path:
     char* buffer;
     auto lowercased = create_uninitialized(m_length, buffer);
-    for (ssize_t i = 0; i < m_length; ++i)
-        buffer[i] = to_ascii_lowercase(m_characters[i]);
+    for (size_t i = 0; i < m_length; ++i)
+        buffer[i] = to_ascii_lowercase(characters()[i]);
     return lowercased;
 }
 
-Retained<StringImpl> StringImpl::to_uppercase() const
+NonnullRefPtr<StringImpl> StringImpl::to_uppercase() const
 {
-    for (ssize_t i = 0; i < m_length; ++i) {
-        if (!is_ascii_uppercase(m_characters[i]))
+    for (size_t i = 0; i < m_length; ++i) {
+        if (!is_ascii_uppercase(characters()[i]))
             goto slow_path;
     }
     return const_cast<StringImpl&>(*this);
@@ -148,8 +184,8 @@ Retained<StringImpl> StringImpl::to_uppercase() const
 slow_path:
     char* buffer;
     auto uppercased = create_uninitialized(m_length, buffer);
-    for (ssize_t i = 0; i < m_length; ++i)
-        buffer[i] = to_ascii_uppercase(m_characters[i]);
+    for (size_t i = 0; i < m_length; ++i)
+        buffer[i] = to_ascii_uppercase(characters()[i]);
     return uppercased;
 }
 
@@ -158,9 +194,8 @@ void StringImpl::compute_hash() const
     if (!length())
         m_hash = 0;
     else
-        m_hash = string_hash(m_characters, m_length);
-    m_hasHash = true;
+        m_hash = string_hash(characters(), m_length);
+    m_has_hash = true;
 }
 
 }
-
