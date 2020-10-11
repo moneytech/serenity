@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/KeyCode.h>
 #include <LibGUI/ListView.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
@@ -35,12 +34,22 @@ namespace GUI {
 
 ListView::ListView()
 {
+    set_fill_with_background_color(true);
     set_background_role(ColorRole::Base);
     set_foreground_role(ColorRole::BaseText);
 }
 
 ListView::~ListView()
 {
+}
+
+void ListView::select_all()
+{
+    selection().clear();
+    for (int item_index = 0; item_index < item_count(); ++item_index) {
+        auto index = model()->index(item_index, m_model_column);
+        selection().add(index);
+    }
 }
 
 void ListView::update_content_size()
@@ -50,7 +59,7 @@ void ListView::update_content_size()
 
     int content_width = 0;
     for (int row = 0, row_count = model()->row_count(); row < row_count; ++row) {
-        auto text = model()->data(model()->index(row, m_model_column), Model::Role::Display);
+        auto text = model()->index(row, m_model_column).data();
         content_width = max(content_width, font().width(text.to_string()));
     }
 
@@ -66,24 +75,24 @@ void ListView::resize_event(ResizeEvent& event)
     AbstractView::resize_event(event);
 }
 
-void ListView::did_update_model()
+void ListView::did_update_model(unsigned flags)
 {
-    AbstractView::did_update_model();
+    AbstractView::did_update_model(flags);
     update_content_size();
     update();
 }
 
-Gfx::Rect ListView::content_rect(int row) const
+Gfx::IntRect ListView::content_rect(int row) const
 {
     return { 0, row * item_height(), content_width(), item_height() };
 }
 
-Gfx::Rect ListView::content_rect(const ModelIndex& index) const
+Gfx::IntRect ListView::content_rect(const ModelIndex& index) const
 {
     return content_rect(index.row());
 }
 
-ModelIndex ListView::index_at_event_position(const Gfx::Point& point) const
+ModelIndex ListView::index_at_event_position(const Gfx::IntPoint& point) const
 {
     ASSERT(model());
 
@@ -96,9 +105,51 @@ ModelIndex ListView::index_at_event_position(const Gfx::Point& point) const
     return {};
 }
 
-Gfx::Point ListView::adjusted_position(const Gfx::Point& position) const
+Gfx::IntPoint ListView::adjusted_position(const Gfx::IntPoint& position) const
 {
     return position.translated(horizontal_scrollbar().value() - frame_thickness(), vertical_scrollbar().value() - frame_thickness());
+}
+
+void ListView::paint_list_item(Painter& painter, int row_index, int painted_item_index)
+{
+    bool is_selected_row = selection().contains_row(row_index);
+
+    int y = painted_item_index * item_height();
+
+    Color background_color;
+    if (is_selected_row) {
+        background_color = is_focused() ? palette().selection() : palette().inactive_selection();
+    } else {
+        Color row_fill_color = palette().color(background_role());
+        if (alternating_row_colors() && (painted_item_index % 2)) {
+            background_color = row_fill_color.darkened(0.8f);
+        } else {
+            background_color = row_fill_color;
+        }
+    }
+
+    Gfx::IntRect row_rect(0, y, content_width(), item_height());
+    painter.fill_rect(row_rect, background_color);
+    auto index = model()->index(row_index, m_model_column);
+    auto data = index.data();
+    auto font = font_for_index(index);
+    if (data.is_bitmap()) {
+        painter.blit(row_rect.location(), data.as_bitmap(), data.as_bitmap().rect());
+    } else if (data.is_icon()) {
+        if (auto bitmap = data.as_icon().bitmap_for_size(16))
+            painter.blit(row_rect.location(), *bitmap, bitmap->rect());
+    } else {
+        Color text_color;
+        if (is_selected_row)
+            text_color = is_focused() ? palette().selection_text() : palette().inactive_selection_text();
+        else
+            text_color = index.data(ModelRole::ForegroundColor).to_color(palette().color(foreground_role()));
+        auto text_rect = row_rect;
+        text_rect.move_by(horizontal_padding(), 0);
+        text_rect.set_width(text_rect.width() - horizontal_padding() * 2);
+        auto text_alignment = index.data(ModelRole::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterLeft);
+        painter.draw_text(text_rect, data.to_string(), font, text_alignment, text_color);
+    }
 }
 
 void ListView::paint_event(PaintEvent& event)
@@ -118,50 +169,13 @@ void ListView::paint_event(PaintEvent& event)
     int painted_item_index = 0;
 
     for (int row_index = 0; row_index < model()->row_count(); ++row_index) {
-        bool is_selected_row = selection().contains_row(row_index);
-        int y = painted_item_index * item_height();
-
-        Color background_color;
-        if (is_selected_row) {
-            background_color = is_focused() ? palette().selection() : palette().inactive_selection();
-        } else {
-            Color row_fill_color = palette().color(background_role());
-            if (alternating_row_colors() && (painted_item_index % 2)) {
-                background_color = row_fill_color.darkened(0.8f);
-            } else {
-                background_color = row_fill_color;
-            }
-        }
-
-        auto column_metadata = model()->column_metadata(m_model_column);
-
-        Gfx::Rect row_rect(0, y, content_width(), item_height());
-        painter.fill_rect(row_rect, background_color);
-        auto index = model()->index(row_index, m_model_column);
-        auto data = model()->data(index);
-        auto font = font_for_index(index);
-        if (data.is_bitmap()) {
-            painter.blit(row_rect.location(), data.as_bitmap(), data.as_bitmap().rect());
-        } else if (data.is_icon()) {
-            if (auto bitmap = data.as_icon().bitmap_for_size(16))
-                painter.blit(row_rect.location(), *bitmap, bitmap->rect());
-        } else {
-            Color text_color;
-            if (is_selected_row)
-                text_color = is_focused() ? palette().selection_text() : palette().inactive_selection_text();
-            else
-                text_color = model()->data(index, Model::Role::ForegroundColor).to_color(palette().color(foreground_role()));
-            auto text_rect = row_rect;
-            text_rect.move_by(horizontal_padding(), 0);
-            text_rect.set_width(text_rect.width() - horizontal_padding() * 2);
-            painter.draw_text(text_rect, data.to_string(), font, column_metadata.text_alignment, text_color);
-        }
-
+        paint_list_item(painter, row_index, painted_item_index);
         ++painted_item_index;
     };
 
-    Gfx::Rect unpainted_rect(0, painted_item_index * item_height(), exposed_width, height());
-    painter.fill_rect(unpainted_rect, palette().color(background_role()));
+    Gfx::IntRect unpainted_rect(0, painted_item_index * item_height(), exposed_width, height());
+    if (fill_with_background_color())
+        painter.fill_rect(unpainted_rect, palette().color(background_role()));
 }
 
 int ListView::item_count() const
@@ -171,88 +185,90 @@ int ListView::item_count() const
     return model()->row_count();
 }
 
+void ListView::mousemove_event(MouseEvent& event)
+{
+    auto previous_hovered_index = m_hovered_index;
+    AbstractView::mousemove_event(event);
+    if (hover_highlighting() && previous_hovered_index != m_hovered_index)
+        set_cursor(m_hovered_index, SelectionUpdate::Set);
+}
+
 void ListView::keydown_event(KeyEvent& event)
 {
     if (!model())
         return;
-    auto& model = *this->model();
-    if (event.key() == KeyCode::Key_Return) {
-        activate_selected();
+
+    if (event.key() == KeyCode::Key_Escape) {
+        if (on_escape_pressed)
+            on_escape_pressed();
         return;
     }
-    if (event.key() == KeyCode::Key_Up) {
-        ModelIndex new_index;
-        if (!selection().is_empty()) {
-            auto old_index = selection().first();
-            new_index = model.index(old_index.row() - 1, old_index.column());
-        } else {
-            new_index = model.index(0, 0);
-        }
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
-        return;
-    }
-    if (event.key() == KeyCode::Key_Down) {
-        ModelIndex new_index;
-        if (!selection().is_empty()) {
-            auto old_index = selection().first();
-            new_index = model.index(old_index.row() + 1, old_index.column());
-        } else {
-            new_index = model.index(0, 0);
-        }
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
-        return;
-    }
-    if (event.key() == KeyCode::Key_PageUp) {
-        int items_per_page = visible_content_rect().height() / item_height();
-        auto old_index = selection().first();
-        auto new_index = model.index(max(0, old_index.row() - items_per_page), old_index.column());
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
-        return;
-    }
-    if (event.key() == KeyCode::Key_PageDown) {
-        int items_per_page = visible_content_rect().height() / item_height();
-        auto old_index = selection().first();
-        auto new_index = model.index(min(model.row_count() - 1, old_index.row() + items_per_page), old_index.column());
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
-        return;
-    }
-    return Widget::keydown_event(event);
+    AbstractView::keydown_event(event);
 }
 
-void ListView::scroll_into_view(const ModelIndex& index, Orientation orientation)
-{
-    auto rect = content_rect(index.row());
-    ScrollableWidget::scroll_into_view(rect, orientation);
-}
-
-void ListView::doubleclick_event(MouseEvent& event)
+void ListView::move_cursor_relative(int steps, SelectionUpdate selection_update)
 {
     if (!model())
         return;
-    if (event.button() == MouseButton::Left) {
-        if (!selection().is_empty()) {
-            if (is_editable())
-                begin_editing(selection().first());
-            else
-                activate_selected();
-        }
+    auto& model = *this->model();
+    ModelIndex new_index;
+    if (cursor_index().is_valid()) {
+        new_index = model.index(cursor_index().row() + steps, cursor_index().column());
+    } else {
+        new_index = model.index(0, 0);
     }
+    set_cursor(new_index, selection_update);
+}
+
+void ListView::move_cursor(CursorMovement movement, SelectionUpdate selection_update)
+{
+    if (!model())
+        return;
+    auto& model = *this->model();
+
+    if (!cursor_index().is_valid()) {
+        set_cursor(model.index(0, 0), SelectionUpdate::Set);
+        return;
+    }
+
+    ModelIndex new_index;
+
+    switch (movement) {
+    case CursorMovement::Up:
+        new_index = model.index(cursor_index().row() - 1, cursor_index().column());
+        break;
+    case CursorMovement::Down:
+        new_index = model.index(cursor_index().row() + 1, cursor_index().column());
+        break;
+    case CursorMovement::Home:
+        new_index = model.index(0, 0);
+        break;
+    case CursorMovement::End:
+        new_index = model.index(model.row_count() - 1, 0);
+        break;
+    case CursorMovement::PageUp: {
+        int items_per_page = visible_content_rect().height() / item_height();
+        new_index = model.index(max(0, cursor_index().row() - items_per_page), cursor_index().column());
+        break;
+    }
+    case CursorMovement::PageDown: {
+        int items_per_page = visible_content_rect().height() / item_height();
+        new_index = model.index(min(model.row_count() - 1, cursor_index().row() + items_per_page), cursor_index().column());
+        break;
+    }
+    default:
+        break;
+    }
+
+    if (new_index.is_valid())
+        set_cursor(new_index, selection_update);
+}
+
+void ListView::scroll_into_view(const ModelIndex& index, bool scroll_horizontally, bool scroll_vertically)
+{
+    if (!model())
+        return;
+    ScrollableWidget::scroll_into_view(content_rect(index.row()), scroll_horizontally, scroll_vertically);
 }
 
 }

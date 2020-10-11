@@ -33,7 +33,7 @@
 namespace Core {
 
 struct ThreadStatistics {
-    int tid;
+    pid_t tid;
     unsigned times_scheduled;
     unsigned ticks;
     unsigned syscall_count;
@@ -47,6 +47,7 @@ struct ThreadStatistics {
     unsigned file_read_bytes;
     unsigned file_write_bytes;
     String state;
+    u32 cpu;
     u32 priority;
     u32 effective_priority;
     String name;
@@ -56,9 +57,9 @@ struct ProcessStatistics {
     // Keep this in sync with /proc/all.
     // From the kernel side:
     pid_t pid;
-    unsigned pgid;
-    unsigned pgp;
-    unsigned sid;
+    pid_t pgid;
+    pid_t pgp;
+    pid_t sid;
     uid_t uid;
     gid_t gid;
     pid_t ppid;

@@ -32,11 +32,15 @@
 #include <LibGUI/Application.h>
 #include <stdio.h>
 
+namespace Inspector {
+
 RemoteObjectGraphModel::RemoteObjectGraphModel(RemoteProcess& process)
     : m_process(process)
 {
     m_object_icon.set_bitmap_for_size(16, Gfx::Bitmap::load_from_file("/res/icons/16x16/inspector-object.png"));
     m_window_icon.set_bitmap_for_size(16, Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png"));
+    m_layout_icon.set_bitmap_for_size(16, Gfx::Bitmap::load_from_file("/res/icons/16x16/layout.png"));
+    m_timer_icon.set_bitmap_for_size(16, Gfx::Bitmap::load_from_file("/res/icons/16x16/timer.png"));
 }
 
 RemoteObjectGraphModel::~RemoteObjectGraphModel()
@@ -64,7 +68,7 @@ GUI::ModelIndex RemoteObjectGraphModel::parent_index(const GUI::ModelIndex& inde
 
     // NOTE: If the parent has no parent, it's a root, so we have to look among the remote roots.
     if (!remote_object.parent->parent) {
-        for (int row = 0; row < m_process.roots().size(); ++row) {
+        for (size_t row = 0; row < m_process.roots().size(); ++row) {
             if (&m_process.roots()[row] == remote_object.parent)
                 return create_index(row, 0, remote_object.parent);
         }
@@ -72,7 +76,7 @@ GUI::ModelIndex RemoteObjectGraphModel::parent_index(const GUI::ModelIndex& inde
         return {};
     }
 
-    for (int row = 0; row < remote_object.parent->parent->children.size(); ++row) {
+    for (size_t row = 0; row < remote_object.parent->parent->children.size(); ++row) {
         if (&remote_object.parent->parent->children[row] == remote_object.parent)
             return create_index(row, 0, remote_object.parent);
     }
@@ -94,16 +98,20 @@ int RemoteObjectGraphModel::column_count(const GUI::ModelIndex&) const
     return 1;
 }
 
-GUI::Variant RemoteObjectGraphModel::data(const GUI::ModelIndex& index, Role role) const
+GUI::Variant RemoteObjectGraphModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
 {
     auto* remote_object = static_cast<RemoteObject*>(index.internal_data());
-    if (role == Role::Icon) {
-        if (remote_object->class_name == "GWindow")
+    if (role == GUI::ModelRole::Icon) {
+        if (remote_object->class_name == "Window")
             return m_window_icon;
+        if (remote_object->class_name == "Timer")
+            return m_timer_icon;
+        if (remote_object->class_name.ends_with("Layout"))
+            return m_layout_icon;
         return m_object_icon;
     }
-    if (role == Role::Display) {
-        return String::format("%s{%s} (%d)", remote_object->class_name.characters(), remote_object->address.characters(), remote_object->children.size());
+    if (role == GUI::ModelRole::Display) {
+        return String::format("%s{%p}", remote_object->class_name.characters(), remote_object->address);
     }
     return {};
 }
@@ -111,4 +119,6 @@ GUI::Variant RemoteObjectGraphModel::data(const GUI::ModelIndex& index, Role rol
 void RemoteObjectGraphModel::update()
 {
     did_update();
+}
+
 }

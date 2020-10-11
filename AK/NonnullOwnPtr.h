@@ -28,6 +28,7 @@
 
 #include <AK/Assertions.h>
 #include <AK/LogStream.h>
+#include <AK/RefCounted.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Traits.h>
 #include <AK/Types.h>
@@ -42,27 +43,25 @@ template<typename T>
 class WeakPtr;
 
 template<typename T>
-class CONSUMABLE(unconsumed) NonnullOwnPtr {
+class NonnullOwnPtr {
 public:
     typedef T ElementType;
 
     enum AdoptTag { Adopt };
 
-    RETURN_TYPESTATE(unconsumed)
     NonnullOwnPtr(AdoptTag, T& ptr)
         : m_ptr(&ptr)
     {
+        static_assert(!is_ref_counted((const T*)nullptr), "Use RefPtr<> for RefCounted types");
     }
-    RETURN_TYPESTATE(unconsumed)
     NonnullOwnPtr(NonnullOwnPtr&& other)
         : m_ptr(other.leak_ptr())
     {
         ASSERT(m_ptr);
     }
     template<typename U>
-    RETURN_TYPESTATE(unconsumed)
     NonnullOwnPtr(NonnullOwnPtr<U>&& other)
-        : m_ptr(static_cast<T*>(other.leak_ptr()))
+        : m_ptr(other.leak_ptr())
     {
         ASSERT(m_ptr);
     }
@@ -97,7 +96,6 @@ public:
     template<typename U>
     NonnullOwnPtr& operator=(const WeakPtr<U>&) = delete;
 
-    RETURN_TYPESTATE(unconsumed)
     NonnullOwnPtr& operator=(NonnullOwnPtr&& other)
     {
         NonnullOwnPtr ptr(move(other));
@@ -106,7 +104,6 @@ public:
     }
 
     template<typename U>
-    RETURN_TYPESTATE(unconsumed)
     NonnullOwnPtr& operator=(NonnullOwnPtr<U>&& other)
     {
         NonnullOwnPtr ptr(move(other));
@@ -114,31 +111,21 @@ public:
         return *this;
     }
 
-    CALLABLE_WHEN(unconsumed)
-    SET_TYPESTATE(consumed)
-    T* leak_ptr()
+    [[nodiscard]] T* leak_ptr()
     {
         return exchange(m_ptr, nullptr);
     }
 
-    CALLABLE_WHEN(unconsumed)
     T* ptr() { return m_ptr; }
-    CALLABLE_WHEN(unconsumed)
     const T* ptr() const { return m_ptr; }
 
-    CALLABLE_WHEN(unconsumed)
     T* operator->() { return m_ptr; }
-    CALLABLE_WHEN(unconsumed)
     const T* operator->() const { return m_ptr; }
 
-    CALLABLE_WHEN(unconsumed)
     T& operator*() { return *m_ptr; }
-    CALLABLE_WHEN(unconsumed)
     const T& operator*() const { return *m_ptr; }
 
-    CALLABLE_WHEN(unconsumed)
     operator const T*() const { return m_ptr; }
-    CALLABLE_WHEN(unconsumed)
     operator T*() { return m_ptr; }
 
     operator bool() const = delete;
@@ -155,6 +142,13 @@ public:
         ::swap(m_ptr, other.m_ptr);
     }
 
+    template<typename U>
+    NonnullOwnPtr<U> release_nonnull()
+    {
+        ASSERT(m_ptr);
+        return NonnullOwnPtr<U>(NonnullOwnPtr<U>::Adopt, static_cast<U&>(*leak_ptr()));
+    }
+
 private:
     void clear()
     {
@@ -166,6 +160,12 @@ private:
 
     T* m_ptr = nullptr;
 };
+
+template<typename T>
+inline NonnullOwnPtr<T> adopt_own(T& object)
+{
+    return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, object);
+}
 
 template<class T, class... Args>
 inline NonnullOwnPtr<T>
@@ -195,5 +195,6 @@ inline void swap(NonnullOwnPtr<T>& a, NonnullOwnPtr<U>& b)
 
 }
 
+using AK::adopt_own;
 using AK::make;
 using AK::NonnullOwnPtr;

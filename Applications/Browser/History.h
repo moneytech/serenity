@@ -26,62 +26,29 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <AK/String.h>
+#include <AK/URL.h>
 #include <AK/Vector.h>
 
-template<typename T>
-class History final {
+namespace Browser {
+
+class History {
 public:
-    void push(const T& item);
-    T current() const;
+    void dump() const;
+
+    void push(const URL&);
+    URL current() const;
 
     void go_back();
     void go_forward();
 
     bool can_go_back() { return m_current > 0; }
-    bool can_go_forward() { return m_current + 1 < m_items.size(); }
+    bool can_go_forward() { return m_current + 1 < static_cast<int>(m_items.size()); }
 
     void clear();
 
 private:
-    Vector<T> m_items;
+    Vector<URL> m_items;
     int m_current { -1 };
 };
 
-template<typename T>
-inline void History<T>::push(const T& item)
-{
-    m_items.shrink(m_current + 1);
-    m_items.append(item);
-    m_current++;
-}
-
-template<typename T>
-inline T History<T>::current() const
-{
-    if (m_current == -1)
-        return {};
-    return m_items[m_current];
-}
-
-template<typename T>
-inline void History<T>::go_back()
-{
-    ASSERT(can_go_back());
-    m_current--;
-}
-
-template<typename T>
-inline void History<T>::go_forward()
-{
-    ASSERT(can_go_forward());
-    m_current++;
-}
-
-template<typename T>
-inline void History<T>::clear()
-{
-    m_items = {};
-    m_current = -1;
 }

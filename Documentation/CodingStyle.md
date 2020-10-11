@@ -2,7 +2,7 @@
 
 For low-level styling (spaces, parentheses, brace placement, etc), all code should follow the format specified in `.clang-format` in the project root.
 
-**Important: Make sure you use `clang-format` version 8 or later!**
+**Important: Make sure you use `clang-format` version 10 or later!**
 
 This document describes the coding style used for C++ code in the Serenity Operating System project. All new code should conform to this style.
 
@@ -381,6 +381,55 @@ signed int c; // Doesn't omit "signed".
 
 ### Classes
 
+[](#structs-vs-classes) For types with methods, prefer `class` over `struct`.
+
+* For classes, make public getters and setters, keep members private with `m_` prefix.
+* For structs, let everything be public and skip the `m_` prefix.
+
+###### Right:
+
+```cpp
+struct Thingy {
+    String name;
+    int frob_count { 0 };
+};
+
+class Doohickey {
+public:
+    const String& name() const { return m_name; }
+    int frob_count() const { return m_frob_count; }
+
+    void jam();
+
+private;
+    String m_name;
+    int m_frob_count { 0 };
+}
+```
+
+###### Wrong:
+
+```cpp
+struct Thingy {
+public:
+    String m_name;
+    int frob_count() const { return m_frob_count; }
+
+private:
+    int m_frob_count { 0 };
+}
+
+class Doohickey {
+public:
+    const String& name() const { return this->name; }
+
+    void jam();
+
+    String name;
+    int frob_count { 0 };
+};
+```
+
 [](#classes-explicit) Use a constructor to do an implicit conversion when the argument is reasonably thought of as a type conversion and the type conversion is fast. Otherwise, use the explicit keyword or a function returning the type. This only applies to single argument constructors.
 
 ###### Right:
@@ -444,7 +493,7 @@ UniqueObject& my_unique_object(); // Free function.
 
 ### Comments
 
-[](#comments-sentences) Make comments look like sentences by starting with a capital letter and ending with a period (punctation). One exception may be end of line comments like this `if (x == y) // false for NaN`.
+[](#comments-sentences) Make comments look like sentences by starting with a capital letter and ending with a period (punctuation). One exception may be end of line comments like this `if (x == y) // false for NaN`.
 
 [](#comments-fixme) Use FIXME: (without attribution) to denote items that need to be addressed in the future.
 

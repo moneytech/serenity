@@ -100,9 +100,9 @@ ScrollBar::ScrollBar(Orientation orientation)
         s_right_arrow_bitmap = &Gfx::CharacterBitmap::create_from_ascii(s_right_arrow_bitmap_data, 9, 9).leak_ref();
 
     if (m_orientation == Orientation::Vertical) {
-        set_preferred_size(15, 0);
+        set_preferred_size(16, 0);
     } else {
-        set_preferred_size(0, 15);
+        set_preferred_size(0, 16);
     }
 
     m_automatic_scrolling_timer->set_interval(100);
@@ -115,14 +115,17 @@ ScrollBar::~ScrollBar()
 {
 }
 
-void ScrollBar::set_range(int min, int max)
+void ScrollBar::set_range(int min, int max, int page)
 {
     ASSERT(min <= max);
-    if (m_min == min && m_max == max)
+    if (page < 0)
+        page = 0;
+    if (m_min == min && m_max == max && m_page == page)
         return;
 
     m_min = min;
     m_max = max;
+    m_page = page;
 
     int old_value = m_value;
     m_value = clamp(m_value, m_min, m_max);
@@ -143,12 +146,12 @@ void ScrollBar::set_value(int value)
     update();
 }
 
-Gfx::Rect ScrollBar::decrement_button_rect() const
+Gfx::IntRect ScrollBar::decrement_button_rect() const
 {
     return { 0, 0, button_width(), button_height() };
 }
 
-Gfx::Rect ScrollBar::increment_button_rect() const
+Gfx::IntRect ScrollBar::increment_button_rect() const
 {
     if (orientation() == Orientation::Vertical)
         return { 0, height() - button_height(), button_width(), button_height() };
@@ -156,7 +159,7 @@ Gfx::Rect ScrollBar::increment_button_rect() const
         return { width() - button_width(), 0, button_width(), button_height() };
 }
 
-Gfx::Rect ScrollBar::decrement_gutter_rect() const
+Gfx::IntRect ScrollBar::decrement_gutter_rect() const
 {
     if (orientation() == Orientation::Vertical)
         return { 0, button_height(), button_width(), scrubber_rect().top() - button_height() };
@@ -164,7 +167,7 @@ Gfx::Rect ScrollBar::decrement_gutter_rect() const
         return { button_width(), 0, scrubber_rect().x() - button_width(), button_height() };
 }
 
-Gfx::Rect ScrollBar::increment_gutter_rect() const
+Gfx::IntRect ScrollBar::increment_gutter_rect() const
 {
     auto scrubber_rect = this->scrubber_rect();
     if (orientation() == Orientation::Vertical)
@@ -176,9 +179,9 @@ Gfx::Rect ScrollBar::increment_gutter_rect() const
 int ScrollBar::scrubbable_range_in_pixels() const
 {
     if (orientation() == Orientation::Vertical)
-        return height() - button_height() * 2 - scrubber_size();
+        return height() - button_height() * 2 - visible_scrubber_size();
     else
-        return width() - button_width() * 2 - scrubber_size();
+        return width() - button_width() * 2 - visible_scrubber_size();
 }
 
 bool ScrollBar::has_scrubber() const
@@ -186,22 +189,34 @@ bool ScrollBar::has_scrubber() const
     return m_max != m_min;
 }
 
-int ScrollBar::scrubber_size() const
+int ScrollBar::unclamped_scrubber_size() const
 {
     int pixel_range = length(orientation()) - button_size() * 2;
     int value_range = m_max - m_min;
-    return ::max(pixel_range - value_range, button_size());
+
+    int scrubber_size = 0;
+    if (value_range > 0) {
+        // Scrubber size should be proportional to the visible portion
+        // (page) in relation to the content (value range + page)
+        scrubber_size = (m_page * pixel_range) / (value_range + m_page);
+    }
+    return scrubber_size;
 }
 
-Gfx::Rect ScrollBar::scrubber_rect() const
+int ScrollBar::visible_scrubber_size() const
 {
-    if (!has_scrubber() || length(orientation()) <= (button_size() * 2) + scrubber_size())
+    return ::max(unclamped_scrubber_size(), button_size());
+}
+
+Gfx::IntRect ScrollBar::scrubber_rect() const
+{
+    if (!has_scrubber() || length(orientation()) <= (button_size() * 2) + visible_scrubber_size())
         return {};
     float x_or_y;
     if (m_value == m_min)
         x_or_y = button_size();
     else if (m_value == m_max)
-        x_or_y = (length(orientation()) - button_size() - scrubber_size()) + 1;
+        x_or_y = (length(orientation()) - button_size() - visible_scrubber_size()) + 1;
     else {
         float range_size = m_max - m_min;
         float available = scrubbable_range_in_pixels();
@@ -210,9 +225,9 @@ Gfx::Rect ScrollBar::scrubber_rect() const
     }
 
     if (orientation() == Orientation::Vertical)
-        return { 0, (int)x_or_y, button_width(), scrubber_size() };
+        return { 0, (int)x_or_y, button_width(), visible_scrubber_size() };
     else
-        return { (int)x_or_y, 0, scrubber_size(), button_height() };
+        return { (int)x_or_y, 0, visible_scrubber_size(), button_height() };
 }
 
 void ScrollBar::paint_event(PaintEvent& event)
@@ -220,13 +235,17 @@ void ScrollBar::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    painter.fill_rect(rect(), palette().button().lightened());
+    Component hovered_component_for_painting = m_hovered_component;
+    if (!has_scrubber() || (m_pressed_component != Component::None && m_hovered_component != m_pressed_component))
+        hovered_component_for_painting = Component::None;
 
-    bool decrement_pressed = m_automatic_scrolling_direction == AutomaticScrollingDirection::Decrement;
-    bool increment_pressed = m_automatic_scrolling_direction == AutomaticScrollingDirection::Increment;
+    painter.fill_rect_with_dither_pattern(rect(), palette().button().lightened(1.3f), palette().button());
 
-    Gfx::StylePainter::paint_button(painter, decrement_button_rect(), palette(), Gfx::ButtonStyle::Normal, decrement_pressed, m_hovered_component == Component::DecrementButton);
-    Gfx::StylePainter::paint_button(painter, increment_button_rect(), palette(), Gfx::ButtonStyle::Normal, increment_pressed, m_hovered_component == Component::IncrementButton);
+    bool decrement_pressed = m_pressed_component == Component::DecrementButton;
+    bool increment_pressed = m_pressed_component == Component::IncrementButton;
+
+    Gfx::StylePainter::paint_button(painter, decrement_button_rect(), palette(), Gfx::ButtonStyle::Normal, decrement_pressed, hovered_component_for_painting == Component::DecrementButton);
+    Gfx::StylePainter::paint_button(painter, increment_button_rect(), palette(), Gfx::ButtonStyle::Normal, increment_pressed, hovered_component_for_painting == Component::IncrementButton);
 
     if (length(orientation()) > default_button_size()) {
         auto decrement_location = decrement_button_rect().location().translated(3, 3);
@@ -241,17 +260,22 @@ void ScrollBar::paint_event(PaintEvent& event)
     }
 
     if (has_scrubber())
-        Gfx::StylePainter::paint_button(painter, scrubber_rect(), palette(), Gfx::ButtonStyle::Normal, false, m_hovered_component == Component::Scrubber || m_scrubber_in_use);
+        Gfx::StylePainter::paint_button(painter, scrubber_rect(), palette(), Gfx::ButtonStyle::Normal, false, hovered_component_for_painting == Component::Scrubber || m_pressed_component == Component::Scrubber);
 }
 
 void ScrollBar::on_automatic_scrolling_timer_fired()
 {
-    if (m_automatic_scrolling_direction == AutomaticScrollingDirection::Decrement) {
+    if (m_pressed_component == Component::DecrementButton && component_at_position(m_last_mouse_position) == Component::DecrementButton) {
         set_value(value() - m_step);
         return;
     }
-    if (m_automatic_scrolling_direction == AutomaticScrollingDirection::Increment) {
+    if (m_pressed_component == Component::IncrementButton && component_at_position(m_last_mouse_position) == Component::IncrementButton) {
         set_value(value() + m_step);
+        return;
+    }
+    if (m_pressed_component == Component::Gutter && component_at_position(m_last_mouse_position) == Component::Gutter) {
+        scroll_by_page(m_last_mouse_position);
+        m_hovered_component = component_at_position(m_last_mouse_position);
         return;
     }
 }
@@ -263,54 +287,43 @@ void ScrollBar::mousedown_event(MouseEvent& event)
     if (!has_scrubber())
         return;
 
-    if (decrement_button_rect().contains(event.position())) {
-        m_automatic_scrolling_direction = AutomaticScrollingDirection::Decrement;
-        set_automatic_scrolling_active(true);
+    m_last_mouse_position = event.position();
+    m_pressed_component = component_at_position(m_last_mouse_position);
+
+    if (m_pressed_component == Component::DecrementButton) {
+        set_automatic_scrolling_active(true, Component::DecrementButton);
         update();
         return;
     }
-    if (increment_button_rect().contains(event.position())) {
-        m_automatic_scrolling_direction = AutomaticScrollingDirection::Increment;
-        set_automatic_scrolling_active(true);
+    if (m_pressed_component == Component::IncrementButton) {
+        set_automatic_scrolling_active(true, Component::IncrementButton);
         update();
         return;
     }
-    if (scrubber_rect().contains(event.position())) {
-        m_scrubber_in_use = true;
-        m_scrubbing = true;
+
+    if (event.shift()) {
+        scroll_to_position(event.position());
+        m_pressed_component = component_at_position(event.position());
+        ASSERT(m_pressed_component == Component::Scrubber);
+    }
+    if (m_pressed_component == Component::Scrubber) {
         m_scrub_start_value = value();
         m_scrub_origin = event.position();
         update();
         return;
     }
+    ASSERT(!event.shift());
 
-    float range_size = m_max - m_min;
-    float available = scrubbable_range_in_pixels();
-
-    float x = ::max(0, event.position().x() - button_width() - button_width() / 2);
-    float y = ::max(0, event.position().y() - button_height() - button_height() / 2);
-
-    float rel_x = x / available;
-    float rel_y = y / available;
-
-    if (orientation() == Orientation::Vertical)
-        set_value(m_min + rel_y * range_size);
-    else
-        set_value(m_min + rel_x * range_size);
-
-    m_scrubbing = true;
-    m_scrub_start_value = value();
-    m_scrub_origin = event.position();
+    ASSERT(m_pressed_component == Component::Gutter);
+    set_automatic_scrolling_active(true, Component::Gutter);
+    update();
 }
 
 void ScrollBar::mouseup_event(MouseEvent& event)
 {
     if (event.button() != MouseButton::Left)
         return;
-    m_scrubber_in_use = false;
-    m_automatic_scrolling_direction = AutomaticScrollingDirection::None;
-    set_automatic_scrolling_active(false);
-    m_scrubbing = false;
+    set_automatic_scrolling_active(false, Component::None);
     update();
 }
 
@@ -322,8 +335,14 @@ void ScrollBar::mousewheel_event(MouseEvent& event)
     Widget::mousewheel_event(event);
 }
 
-void ScrollBar::set_automatic_scrolling_active(bool active)
+void ScrollBar::set_automatic_scrolling_active(bool active, Component pressed_component)
 {
+    m_pressed_component = pressed_component;
+    if (m_pressed_component == Component::Gutter)
+        m_automatic_scrolling_timer->set_interval(200);
+    else
+        m_automatic_scrolling_timer->set_interval(100);
+
     if (active) {
         on_automatic_scrolling_timer_fired();
         m_automatic_scrolling_timer->start();
@@ -332,28 +351,52 @@ void ScrollBar::set_automatic_scrolling_active(bool active)
     }
 }
 
+void ScrollBar::scroll_by_page(const Gfx::IntPoint& click_position)
+{
+    float range_size = m_max - m_min;
+    float available = scrubbable_range_in_pixels();
+    float rel_scrubber_size = unclamped_scrubber_size() / available;
+    float page_increment = range_size * rel_scrubber_size;
+
+    if (click_position.primary_offset_for_orientation(orientation()) < scrubber_rect().primary_offset_for_orientation(orientation()))
+        set_value(value() - page_increment);
+    else
+        set_value(value() + page_increment);
+}
+
+void ScrollBar::scroll_to_position(const Gfx::IntPoint& click_position)
+{
+    float range_size = m_max - m_min;
+    float available = scrubbable_range_in_pixels();
+
+    float x_or_y = ::max(0, click_position.primary_offset_for_orientation(orientation()) - button_width() - button_width() / 2);
+    float rel_x_or_y = x_or_y / available;
+    set_value(m_min + rel_x_or_y * range_size);
+}
+
+ScrollBar::Component ScrollBar::component_at_position(const Gfx::IntPoint& position)
+{
+    if (scrubber_rect().contains(position))
+        return Component::Scrubber;
+    if (decrement_button_rect().contains(position))
+        return Component::DecrementButton;
+    if (increment_button_rect().contains(position))
+        return Component::IncrementButton;
+    if (rect().contains(position))
+        return Component::Gutter;
+    return Component::None;
+}
+
 void ScrollBar::mousemove_event(MouseEvent& event)
 {
+    m_last_mouse_position = event.position();
+
     auto old_hovered_component = m_hovered_component;
-    if (scrubber_rect().contains(event.position()))
-        m_hovered_component = Component::Scrubber;
-    else if (decrement_button_rect().contains(event.position()))
-        m_hovered_component = Component::DecrementButton;
-    else if (increment_button_rect().contains(event.position()))
-        m_hovered_component = Component::IncrementButton;
-    else if (rect().contains(event.position()))
-        m_hovered_component = Component::Gutter;
-    else
-        m_hovered_component = Component::Invalid;
+    m_hovered_component = component_at_position(m_last_mouse_position);
     if (old_hovered_component != m_hovered_component) {
         update();
-
-        if (m_automatic_scrolling_direction == AutomaticScrollingDirection::Decrement)
-            set_automatic_scrolling_active(m_hovered_component == Component::DecrementButton);
-        else if (m_automatic_scrolling_direction == AutomaticScrollingDirection::Increment)
-            set_automatic_scrolling_active(m_hovered_component == Component::IncrementButton);
     }
-    if (!m_scrubbing)
+    if (m_pressed_component != Component::Scrubber)
         return;
     float delta = orientation() == Orientation::Vertical ? (event.y() - m_scrub_origin.y()) : (event.x() - m_scrub_origin.x());
     float scrubbable_range = scrubbable_range_in_pixels();
@@ -364,8 +407,8 @@ void ScrollBar::mousemove_event(MouseEvent& event)
 
 void ScrollBar::leave_event(Core::Event&)
 {
-    if (m_hovered_component != Component::Invalid) {
-        m_hovered_component = Component::Invalid;
+    if (m_hovered_component != Component::None) {
+        m_hovered_component = Component::None;
         update();
     }
 }
@@ -374,7 +417,7 @@ void ScrollBar::change_event(Event& event)
 {
     if (event.type() == Event::Type::EnabledChange) {
         if (!is_enabled())
-            m_scrubbing = false;
+            set_automatic_scrolling_active(false, Component::None);
     }
     return Widget::change_event(event);
 }

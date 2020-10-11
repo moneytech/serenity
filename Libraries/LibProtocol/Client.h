@@ -35,22 +35,26 @@ namespace Protocol {
 
 class Download;
 
-class Client : public IPC::ServerConnection<ProtocolClientEndpoint, ProtocolServerEndpoint>
+class Client
+    : public IPC::ServerConnection<ProtocolClientEndpoint, ProtocolServerEndpoint>
     , public ProtocolClientEndpoint {
-    C_OBJECT(Client)
-public:
-    Client();
+    C_OBJECT(Client);
 
+public:
     virtual void handshake() override;
 
     bool is_supported_protocol(const String&);
-    RefPtr<Download> start_download(const String& url);
+    RefPtr<Download> start_download(const String& method, const String& url, const HashMap<String, String>& request_headers = {}, const ByteBuffer& request_body = {});
 
     bool stop_download(Badge<Download>, Download&);
+    bool set_certificate(Badge<Download>, Download&, String, String);
 
 private:
+    Client();
+
     virtual void handle(const Messages::ProtocolClient::DownloadProgress&) override;
     virtual void handle(const Messages::ProtocolClient::DownloadFinished&) override;
+    virtual OwnPtr<Messages::ProtocolClient::CertificateRequestedResponse> handle(const Messages::ProtocolClient::CertificateRequested&) override;
 
     HashMap<i32, RefPtr<Download>> m_downloads;
 };

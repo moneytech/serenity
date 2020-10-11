@@ -36,23 +36,31 @@ GenericInterruptHandler& GenericInterruptHandler::from(u8 interrupt_number)
     return get_interrupt_handler(interrupt_number);
 }
 
-GenericInterruptHandler::GenericInterruptHandler(u8 interrupt_number)
+GenericInterruptHandler::GenericInterruptHandler(u8 interrupt_number, bool disable_remap)
     : m_interrupt_number(interrupt_number)
+    , m_disable_remap(disable_remap)
 {
-    register_generic_interrupt_handler(interrupt_number, *this);
+    if (m_disable_remap)
+        register_generic_interrupt_handler(m_interrupt_number, *this);
+    else
+        register_generic_interrupt_handler(InterruptManagement::acquire_mapped_interrupt_number(m_interrupt_number), *this);
 }
 
 GenericInterruptHandler::~GenericInterruptHandler()
 {
-    unregister_generic_interrupt_handler(m_interrupt_number, *this);
+    if (m_disable_remap)
+        unregister_generic_interrupt_handler(m_interrupt_number, *this);
+    else
+        unregister_generic_interrupt_handler(InterruptManagement::acquire_mapped_interrupt_number(m_interrupt_number), *this);
 }
 
 void GenericInterruptHandler::change_interrupt_number(u8 number)
 {
-    ASSERT_INTERRUPTS_ENABLED();
-    unregister_generic_interrupt_handler(interrupt_number(), *this);
+    ASSERT_INTERRUPTS_DISABLED();
+    ASSERT(!m_disable_remap);
+    unregister_generic_interrupt_handler(InterruptManagement::acquire_mapped_interrupt_number(interrupt_number()), *this);
     m_interrupt_number = number;
-    register_generic_interrupt_handler(interrupt_number(), *this);
+    register_generic_interrupt_handler(InterruptManagement::acquire_mapped_interrupt_number(interrupt_number()), *this);
 }
 void GenericInterruptHandler::increment_invoking_counter()
 {

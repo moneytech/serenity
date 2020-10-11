@@ -24,8 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGUI/Button.h>
 #include <LibGUI/ComboBox.h>
+#include <LibGUI/ControlBoxButton.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/ListView.h>
 #include <LibGUI/Model.h>
@@ -35,45 +35,101 @@
 
 namespace GUI {
 
+class ComboBoxEditor final : public TextEditor {
+    C_OBJECT(ComboBoxEditor);
+
+public:
+    Function<void(int delta)> on_mousewheel;
+
+private:
+    ComboBoxEditor()
+        : TextEditor(TextEditor::SingleLine)
+    {
+    }
+
+    virtual void mousewheel_event(MouseEvent& event) override
+    {
+        if (!is_focused())
+            set_focus(true);
+        if (on_mousewheel)
+            on_mousewheel(event.wheel_delta());
+    }
+};
+
 ComboBox::ComboBox()
 {
-    m_editor = add<TextBox>();
-    m_editor->on_change = [this] {
-        if (on_change)
-            on_change(m_editor->text(), m_list_view->selection().first());
-    };
+    m_editor = add<ComboBoxEditor>();
+    m_editor->set_has_open_button(true);
     m_editor->on_return_pressed = [this] {
         if (on_return_pressed)
             on_return_pressed();
     };
-    m_open_button = add<Button>();
+    m_editor->on_up_pressed = [this] {
+        m_list_view->move_cursor(AbstractView::CursorMovement::Up, AbstractView::SelectionUpdate::Set);
+    };
+    m_editor->on_down_pressed = [this] {
+        m_list_view->move_cursor(AbstractView::CursorMovement::Down, AbstractView::SelectionUpdate::Set);
+    };
+    m_editor->on_pageup_pressed = [this] {
+        m_list_view->move_cursor(AbstractView::CursorMovement::PageUp, AbstractView::SelectionUpdate::Set);
+    };
+    m_editor->on_pagedown_pressed = [this] {
+        m_list_view->move_cursor(AbstractView::CursorMovement::PageDown, AbstractView::SelectionUpdate::Set);
+    };
+    m_editor->on_mousewheel = [this](int delta) {
+        m_list_view->move_cursor_relative(delta, AbstractView::SelectionUpdate::Set);
+    };
+    m_editor->on_mousedown = [this] {
+        if (only_allow_values_from_model())
+            m_open_button->click();
+    };
+
+    m_open_button = add<ControlBoxButton>(ControlBoxButton::DownArrow);
     m_open_button->set_focusable(false);
-    m_open_button->set_text("\xc3\xb7");
-    m_open_button->on_click = [this](auto&) {
+    m_open_button->on_click = [this](auto) {
         if (m_list_window->is_visible())
             close();
         else
             open();
     };
 
-    m_list_window = add<Window>();
-    // FIXME: This is obviously not a tooltip window, but it's the closest thing to what we want atm.
-    m_list_window->set_window_type(WindowType::Tooltip);
+    m_list_window = add<Window>(window());
+    m_list_window->set_frameless(true);
+    m_list_window->set_accessory(true);
+    m_list_window->on_active_input_change = [this](bool is_active_input) {
+        if (!is_active_input) {
+            m_open_button->set_enabled(false);
+            close();
+        }
+        m_open_button->set_enabled(true);
+    };
 
-    m_list_view = ListView::construct();
+    m_list_view = m_list_window->set_main_widget<ListView>();
     m_list_view->horizontal_scrollbar().set_visible(false);
-    m_list_window->set_main_widget(m_list_view);
-
+    m_list_view->set_alternating_row_colors(false);
+    m_list_view->set_hover_highlighting(true);
+    m_list_view->set_frame_thickness(1);
+    m_list_view->set_frame_shadow(Gfx::FrameShadow::Plain);
     m_list_view->on_selection = [this](auto& index) {
         ASSERT(model());
-        auto new_value = model()->data(index).to_string();
+        m_list_view->set_activates_on_selection(true);
+        auto new_value = index.data().to_string();
         m_editor->set_text(new_value);
-        m_editor->select_all();
-        close();
+        if (!m_only_allow_values_from_model)
+            m_editor->select_all();
+    };
+
+    m_list_view->on_activation = [this](auto& index) {
         deferred_invoke([this, index](auto&) {
             if (on_change)
                 on_change(m_editor->text(), index);
         });
+        m_list_view->set_activates_on_selection(false);
+        close();
+    };
+
+    m_list_view->on_escape_pressed = [this] {
+        close();
     };
 }
 
@@ -95,6 +151,18 @@ void ComboBox::set_model(NonnullRefPtr<Model> model)
     m_list_view->set_model(move(model));
 }
 
+void ComboBox::set_selected_index(size_t index)
+{
+    if (!m_list_view->model())
+        return;
+    m_list_view->set_cursor(m_list_view->model()->index(index, 0), AbstractView::SelectionUpdate::Set);
+}
+
+size_t ComboBox::selected_index() const
+{
+    return m_list_view->cursor_index().row();
+}
+
 void ComboBox::select_all()
 {
     m_editor->select_all();
@@ -110,17 +178,24 @@ void ComboBox::open()
     int longest_item_width = 0;
     for (int i = 0; i < model()->row_count(); ++i) {
         auto index = model()->index(i);
-        auto item_text = model()->data(index).to_string();
+        auto item_text = index.data().to_string();
         longest_item_width = max(longest_item_width, m_list_view->font().width(item_text));
     }
-    Gfx::Size size {
+    Gfx::IntSize size {
         max(width(), longest_item_width + m_list_view->width_occupied_by_vertical_scrollbar() + m_list_view->frame_thickness() * 2 + m_list_view->horizontal_padding()),
         model()->row_count() * m_list_view->item_height() + m_list_view->frame_thickness() * 2
     };
 
-    Gfx::Rect list_window_rect { my_screen_rect.bottom_left(), size };
-    list_window_rect.intersect(Desktop::the().rect().shrunken(0, 128));
+    auto taskbar_height = GUI::Desktop::the().taskbar_height();
+    auto menubar_height = GUI::Desktop::the().menubar_height();
+    // NOTE: This is so the combobox bottom edge exactly fits the taskbar's
+    //       top edge - the value was found through trial and error though.
+    auto offset = 8;
+    Gfx::IntRect list_window_rect { my_screen_rect.bottom_left(), size };
+    list_window_rect.intersect(Desktop::the().rect().shrunken(0, taskbar_height + menubar_height + offset));
 
+    m_editor->set_has_visible_list(true);
+    m_editor->set_focus(true);
     m_list_window->set_rect(list_window_rect);
     m_list_window->show();
 }
@@ -128,6 +203,7 @@ void ComboBox::open()
 void ComboBox::close()
 {
     m_list_window->hide();
+    m_editor->set_has_visible_list(false);
     m_editor->set_focus(true);
 }
 
@@ -146,7 +222,7 @@ void ComboBox::set_only_allow_values_from_model(bool b)
     if (m_only_allow_values_from_model == b)
         return;
     m_only_allow_values_from_model = b;
-    m_editor->set_readonly(m_only_allow_values_from_model);
+    m_editor->set_mode(m_only_allow_values_from_model ? TextEditor::DisplayOnly : TextEditor::Editable);
 }
 
 Model* ComboBox::model()

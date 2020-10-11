@@ -27,16 +27,18 @@
 #pragma once
 
 #include <AK/NonnullOwnPtr.h>
+#include <AK/RefCounted.h>
 
 namespace AK {
 
 template<typename T>
 class OwnPtr {
 public:
-    OwnPtr() {}
+    OwnPtr() { }
     explicit OwnPtr(T* ptr)
         : m_ptr(ptr)
     {
+        static_assert(!is_ref_counted((const T*)nullptr), "Use RefPtr<> for RefCounted types");
     }
     OwnPtr(OwnPtr&& other)
         : m_ptr(other.leak_ptr())
@@ -45,12 +47,12 @@ public:
 
     template<typename U>
     OwnPtr(NonnullOwnPtr<U>&& other)
-        : m_ptr(static_cast<T*>(other.leak_ptr()))
+        : m_ptr(other.leak_ptr())
     {
     }
     template<typename U>
     OwnPtr(OwnPtr<U>&& other)
-        : m_ptr(static_cast<T*>(other.leak_ptr()))
+        : m_ptr(other.leak_ptr())
     {
     }
     OwnPtr(std::nullptr_t) {};
@@ -135,7 +137,7 @@ public:
 
     bool operator!() const { return !m_ptr; }
 
-    T* leak_ptr()
+    [[nodiscard]] T* leak_ptr()
     {
         T* leaked_ptr = m_ptr;
         m_ptr = nullptr;
@@ -146,6 +148,13 @@ public:
     {
         ASSERT(m_ptr);
         return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, *leak_ptr());
+    }
+
+    template<typename U>
+    NonnullOwnPtr<U> release_nonnull()
+    {
+        ASSERT(m_ptr);
+        return NonnullOwnPtr<U>(NonnullOwnPtr<U>::Adopt, static_cast<U&>(*leak_ptr()));
     }
 
     T* ptr() { return m_ptr; }
@@ -204,7 +213,7 @@ inline void swap(OwnPtr<T>& a, OwnPtr<U>& b)
 template<typename T>
 struct Traits<OwnPtr<T>> : public GenericTraits<OwnPtr<T>> {
     using PeekType = const T*;
-    static unsigned hash(const OwnPtr<T>& p) { return int_hash((u32)p.ptr()); }
+    static unsigned hash(const OwnPtr<T>& p) { return ptr_hash(p.ptr()); }
     static bool equals(const OwnPtr<T>& a, const OwnPtr<T>& b) { return a.ptr() == b.ptr(); }
 };
 

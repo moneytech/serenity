@@ -30,6 +30,8 @@
 #include <AK/Function.h>
 #include <AK/IntrusiveList.h>
 #include <AK/Types.h>
+#include <Kernel/SpinLock.h>
+#include <Kernel/UnixTypes.h>
 
 namespace Kernel {
 
@@ -40,28 +42,35 @@ struct RegisterState;
 struct SchedulerData;
 
 extern Thread* g_finalizer;
-extern Thread* g_colonel;
 extern WaitQueue* g_finalizer_wait_queue;
-extern bool g_finalizer_has_work;
+extern Atomic<bool> g_finalizer_has_work;
 extern u64 g_uptime;
 extern SchedulerData* g_scheduler_data;
+extern timeval g_timeofday;
+extern RecursiveSpinLock g_scheduler_lock;
 
 class Scheduler {
 public:
     static void initialize();
-    static void timer_tick(RegisterState&);
+    static Thread* create_ap_idle_thread(u32 cpu);
+    static void set_idle_thread(Thread* idle_thread);
+    static void timer_tick(const RegisterState&);
+    [[noreturn]] static void start();
     static bool pick_next();
-    static void pick_next_and_switch_now();
-    static void switch_now();
+    static timeval time_since_boot();
     static bool yield();
-    static bool donate_to(Thread*, const char* reason);
-    static bool context_switch(Thread&);
-    static void prepare_to_modify_tss(Thread&);
+    static bool donate_to_and_switch(Thread*, const char* reason);
+    static bool donate_to(RefPtr<Thread>&, const char* reason);
+    static bool context_switch(Thread*);
+    static void enter_current(Thread& prev_thread);
+    static void leave_on_first_switch(u32 flags);
+    static void prepare_after_exec();
+    static void prepare_for_idle_loop();
     static Process* colonel();
-    static bool is_active();
     static void beep();
     static void idle_loop();
-    static void stop_idling();
+    static void invoke_async();
+    static void notify_finalizer();
 
     template<typename Callback>
     static inline IterationDecision for_each_runnable(Callback);
@@ -70,10 +79,6 @@ public:
     static inline IterationDecision for_each_nonrunnable(Callback);
 
     static void init_thread(Thread& thread);
-    static void update_state_for_thread(Thread& thread);
-
-private:
-    static void prepare_for_iret_to_new_process();
 };
 
 }

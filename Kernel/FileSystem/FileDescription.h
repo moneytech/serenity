@@ -34,17 +34,9 @@
 #include <Kernel/FileSystem/InodeMetadata.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/KBuffer.h>
-#include <LibBareMetal/Memory/VirtualAddress.h>
+#include <Kernel/VirtualAddress.h>
 
 namespace Kernel {
-
-class CharacterDevice;
-class File;
-class MasterPTY;
-class Process;
-class Region;
-class Socket;
-class TTY;
 
 class FileDescription : public RefCounted<FileDescription> {
     MAKE_SLAB_ALLOCATED(FileDescription)
@@ -65,21 +57,21 @@ public:
         set_writable(options & O_WRONLY);
     }
 
-    int close();
+    KResult close();
 
     off_t seek(off_t, int whence);
-    ssize_t read(u8*, ssize_t);
-    ssize_t write(const u8* data, ssize_t);
-    KResult fstat(stat&);
+    KResultOr<size_t> read(UserOrKernelBuffer&, size_t);
+    KResultOr<size_t> write(const UserOrKernelBuffer& data, size_t);
+    KResult stat(::stat&);
 
     KResult chmod(mode_t);
 
     bool can_read() const;
     bool can_write() const;
 
-    ssize_t get_dir_entries(u8* buffer, ssize_t);
+    ssize_t get_dir_entries(UserOrKernelBuffer& buffer, ssize_t);
 
-    ByteBuffer read_entire_file();
+    KResultOr<KBuffer> read_entire_file();
 
     String absolute_path() const;
 
@@ -109,7 +101,7 @@ public:
     Custody* custody() { return m_custody.ptr(); }
     const Custody* custody() const { return m_custody.ptr(); }
 
-    KResultOr<Region*> mmap(Process&, VirtualAddress, size_t offset, size_t, int prot);
+    KResultOr<Region*> mmap(Process&, VirtualAddress, size_t offset, size_t, int prot, bool shared);
 
     bool is_blocking() const { return m_is_blocking; }
     void set_blocking(bool b) { m_is_blocking = b; }
@@ -153,12 +145,12 @@ private:
 
     u32 m_file_flags { 0 };
 
-    bool m_readable { false };
-    bool m_writable { false };
-    bool m_is_blocking { true };
-    bool m_is_directory { false };
-    bool m_should_append { false };
-    bool m_direct { false };
+    bool m_readable : 1 { false };
+    bool m_writable : 1 { false };
+    bool m_is_blocking : 1 { true };
+    bool m_is_directory : 1 { false };
+    bool m_should_append : 1 { false };
+    bool m_direct : 1 { false };
     FIFO::Direction m_fifo_direction { FIFO::Direction::Neither };
 
     Lock m_lock { "FileDescription" };

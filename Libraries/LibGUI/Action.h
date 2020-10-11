@@ -42,21 +42,24 @@
 namespace GUI {
 
 namespace CommonActions {
-    NonnullRefPtr<Action> make_open_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_undo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_redo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_cut_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_copy_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_paste_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_delete_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_move_to_front_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_move_to_back_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_fullscreen_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_quit_action(Function<void(Action&)>);
-    NonnullRefPtr<Action> make_go_back_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_go_forward_action(Function<void(Action&)>, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_go_home_action(Function<void(Action&)> callback, Core::Object* parent = nullptr);
-    NonnullRefPtr<Action> make_reload_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_open_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_save_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_save_as_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_undo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_redo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_cut_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_copy_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_paste_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_delete_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_move_to_front_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_move_to_back_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_fullscreen_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_quit_action(Function<void(Action&)>);
+NonnullRefPtr<Action> make_go_back_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_go_forward_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_go_home_action(Function<void(Action&)> callback, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_reload_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_select_all_action(Function<void(Action&)>, Core::Object* parent = nullptr);
 };
 
 class Action final : public Core::Object {
@@ -84,9 +87,27 @@ public:
     {
         return adopt(*new Action(text, shortcut, move(icon), move(callback), parent));
     }
+    static NonnullRefPtr<Action> create_checkable(const StringView& text, Function<void(Action&)> callback, Core::Object* parent = nullptr)
+    {
+        return adopt(*new Action(text, move(callback), parent, true));
+    }
+    static NonnullRefPtr<Action> create_checkable(const StringView& text, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> callback, Core::Object* parent = nullptr)
+    {
+        return adopt(*new Action(text, move(icon), move(callback), parent, true));
+    }
+    static NonnullRefPtr<Action> create_checkable(const StringView& text, const Shortcut& shortcut, Function<void(Action&)> callback, Core::Object* parent = nullptr)
+    {
+        return adopt(*new Action(text, shortcut, move(callback), parent, true));
+    }
+    static NonnullRefPtr<Action> create_checkable(const StringView& text, const Shortcut& shortcut, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> callback, Core::Object* parent = nullptr)
+    {
+        return adopt(*new Action(text, shortcut, move(icon), move(callback), parent, true));
+    }
+
     virtual ~Action() override;
 
     String text() const { return m_text; }
+    void set_text(String text) { m_text = move(text); }
     Shortcut shortcut() const { return m_shortcut; }
     const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
     void set_icon(const Gfx::Bitmap*);
@@ -122,10 +143,10 @@ public:
 private:
     virtual bool is_action() const override { return true; }
 
-    Action(const StringView& text, Function<void(Action&)> = nullptr, Core::Object* = nullptr);
-    Action(const StringView& text, const Shortcut&, Function<void(Action&)> = nullptr, Core::Object* = nullptr);
-    Action(const StringView& text, const Shortcut&, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr);
-    Action(const StringView& text, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr);
+    Action(const StringView& text, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
+    Action(const StringView& text, const Shortcut&, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
+    Action(const StringView& text, const Shortcut&, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
+    Action(const StringView& text, RefPtr<Gfx::Bitmap>&& icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
 
     template<typename Callback>
     void for_each_toolbar_button(Callback);
@@ -148,8 +169,6 @@ private:
 
 }
 
-template<>
-inline bool Core::is<GUI::Action>(const Core::Object& object)
-{
-    return object.is_action();
-}
+AK_BEGIN_TYPE_TRAITS(GUI::Action)
+static bool is_type(const Core::Object& object) { return object.is_action(); }
+AK_END_TYPE_TRAITS()

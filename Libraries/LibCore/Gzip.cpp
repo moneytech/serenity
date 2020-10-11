@@ -31,7 +31,11 @@
 #include <limits.h>
 #include <stddef.h>
 
-bool CGzip::is_compressed(const ByteBuffer& data)
+//#define DEBUG_GZIP
+
+namespace Core {
+
+bool Gzip::is_compressed(const ByteBuffer& data)
 {
     return data.size() > 2 && data[0] == 0x1F && data[1] == 0x8b;
 }
@@ -102,7 +106,7 @@ static Optional<ByteBuffer> get_gzip_payload(const ByteBuffer& data)
     return data.slice(current, new_size);
 }
 
-Optional<ByteBuffer> CGzip::decompress(const ByteBuffer& data)
+Optional<ByteBuffer> Gzip::decompress(const ByteBuffer& data)
 {
     ASSERT(is_compressed(data));
 
@@ -117,12 +121,14 @@ Optional<ByteBuffer> CGzip::decompress(const ByteBuffer& data)
     auto destination = ByteBuffer::create_uninitialized(1024);
     while (true) {
         unsigned long destination_len = destination.size();
-        // FIXME: dbg() cannot take ulong?
-        // dbg() << "Gzip::decompress: Calling puff()\n"
-        //       << "  destination_data = " << destination.data() << "\n"
-        //       << "  destination_len = " << (int)destination_len << "\n"
-        //       << "  source_data = " << source.data() << "\n"
-        //       << "  source_len = " << (int)source_len;
+
+#ifdef DEBUG_GZIP
+        dbg() << "Gzip::decompress: Calling puff()\n"
+              << "  destination_data = " << destination.data() << "\n"
+              << "  destination_len = " << destination_len << "\n"
+              << "  source_data = " << source.data() << "\n"
+              << "  source_len = " << source_len;
+#endif
 
         auto puff_ret = puff(
             destination.data(), &destination_len,
@@ -130,6 +136,7 @@ Optional<ByteBuffer> CGzip::decompress(const ByteBuffer& data)
 
         if (puff_ret == 0) {
             dbg() << "Gzip::decompress: Decompression success.";
+            destination.trim(destination_len);
             break;
         }
 
@@ -144,4 +151,6 @@ Optional<ByteBuffer> CGzip::decompress(const ByteBuffer& data)
     }
 
     return destination;
+}
+
 }

@@ -27,23 +27,52 @@
 #include "IRCAppWindow.h"
 #include "IRCClient.h"
 #include <LibGUI/Application.h>
+#include <LibGUI/MessageBox.h>
 #include <stdio.h>
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio inet dns unix shared_buffer cpath rpath fattr", nullptr) < 0) {
+    if (pledge("stdio inet dns unix shared_buffer cpath rpath fattr wpath cpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    if (getuid() == 0) {
+        warnln("Refusing to run as root");
+        return 1;
+    }
 
-    if (pledge("stdio inet dns unix shared_buffer rpath", nullptr) < 0) {
+    auto app = GUI::Application::construct(argc, argv);
+
+    if (pledge("stdio inet dns unix shared_buffer rpath wpath cpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    auto app_window = IRCAppWindow::construct();
+    URL url = "";
+    if (app->args().size() >= 1) {
+        url = URL::create_with_url_or_path(app->args()[0]);
+
+        if (url.protocol().to_lowercase() == "ircs") {
+            warnln("Secure IRC over SSL/TLS (ircs) is not supported");
+            return 1;
+        }
+
+        if (url.protocol().to_lowercase() != "irc") {
+            warnln("Unsupported protocol");
+            return 1;
+        }
+
+        if (url.host().is_empty()) {
+            warnln("Invalid URL");
+            return 1;
+        }
+
+        if (!url.port() || url.port() == 80)
+            url.set_port(6667);
+    }
+
+    auto app_window = IRCAppWindow::construct(url.host(), url.port());
     app_window->show();
-    return app.exec();
+    return app->exec();
 }

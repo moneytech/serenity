@@ -24,39 +24,41 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Singleton.h>
 #include <Kernel/Process.h>
 #include <Kernel/SharedBuffer.h>
 
+//#define SHARED_BUFFER_DEBUG
+
 namespace Kernel {
+
+static AK::Singleton<Lockable<HashMap<int, NonnullOwnPtr<SharedBuffer>>>> s_map;
 
 Lockable<HashMap<int, NonnullOwnPtr<SharedBuffer>>>& shared_buffers()
 {
-    static Lockable<HashMap<int, NonnullOwnPtr<SharedBuffer>>>* map;
-    if (!map)
-        map = new Lockable<HashMap<int, NonnullOwnPtr<SharedBuffer>>>;
-    return *map;
+    return *s_map;
 }
 
 void SharedBuffer::sanity_check(const char* what)
 {
-    LOCKER(shared_buffers().lock());
+    LOCKER(shared_buffers().lock(), Lock::Mode::Shared);
 
     unsigned found_refs = 0;
     for (const auto& ref : m_refs)
         found_refs += ref.count;
 
     if (found_refs != m_total_refs) {
-        dbgprintf("%s sanity -- SharedBuffer{%p} id: %d has total refs %d but we found %d\n", what, this, m_shared_buffer_id, m_total_refs, found_refs);
+        dbg() << what << " sanity -- SharedBuffer{" << this << "} id: " << m_shbuf_id << " has total refs " << m_total_refs << " but we found " << found_refs;
         for (const auto& ref : m_refs) {
-            dbgprintf("    ref from pid %d: refcnt %d\n", ref.pid, ref.count);
+            dbg() << "    ref from pid " << ref.pid.value() << ": refcnt " << ref.count;
         }
         ASSERT_NOT_REACHED();
     }
 }
 
-bool SharedBuffer::is_shared_with(pid_t peer_pid)
+bool SharedBuffer::is_shared_with(ProcessID peer_pid) const
 {
-    LOCKER(shared_buffers().lock());
+    LOCKER(shared_buffers().lock(), Lock::Mode::Shared);
     if (m_global)
         return true;
     for (auto& ref : m_refs) {
@@ -86,12 +88,15 @@ void* SharedBuffer::ref_for_process_and_get_address(Process& process)
 
     for (auto& ref : m_refs) {
         if (ref.pid == process.pid()) {
-            ref.count++;
-            m_total_refs++;
-            if (ref.region == nullptr) {
-                ref.region = process.allocate_region_with_vmobject(VirtualAddress(), size(), m_vmobject, 0, "SharedBuffer", PROT_READ | (m_writable ? PROT_WRITE : 0));
+            if (!ref.region) {
+                auto* region = process.allocate_region_with_vmobject(VirtualAddress(), size(), m_vmobject, 0, "SharedBuffer", PROT_READ | (m_writable ? PROT_WRITE : 0));
+                if (!region)
+                    return (void*)-ENOMEM;
+                ref.region = region->make_weak_ptr();
                 ref.region->set_shared(true);
             }
+            ref.count++;
+            m_total_refs++;
             sanity_check("ref_for_process_and_get_address");
             return ref.region->vaddr().as_ptr();
         }
@@ -99,14 +104,14 @@ void* SharedBuffer::ref_for_process_and_get_address(Process& process)
     ASSERT_NOT_REACHED();
 }
 
-void SharedBuffer::share_with(pid_t peer_pid)
+void SharedBuffer::share_with(ProcessID peer_pid)
 {
     LOCKER(shared_buffers().lock());
     if (m_global)
         return;
     for (auto& ref : m_refs) {
         if (ref.pid == peer_pid) {
-            // don't increment the reference count yet; let them get_shared_buffer it first.
+            // don't increment the reference count yet; let them shbuf_get it first.
             sanity_check("share_with (old ref)");
             return;
         }
@@ -119,19 +124,18 @@ void SharedBuffer::share_with(pid_t peer_pid)
 void SharedBuffer::deref_for_process(Process& process)
 {
     LOCKER(shared_buffers().lock());
-    for (int i = 0; i < m_refs.size(); ++i) {
+    for (size_t i = 0; i < m_refs.size(); ++i) {
         auto& ref = m_refs[i];
         if (ref.pid == process.pid()) {
             ref.count--;
             m_total_refs--;
             if (ref.count == 0) {
 #ifdef SHARED_BUFFER_DEBUG
-                dbgprintf("Releasing shared buffer reference on %d of size %d by PID %d\n", m_shared_buffer_id, size(), process.pid());
+                dbg() << "Releasing shared buffer reference on " << m_shbuf_id << " of size " << size() << " by PID " << process.pid().value();
 #endif
                 process.deallocate_region(*ref.region);
-                m_refs.unstable_remove(i);
 #ifdef SHARED_BUFFER_DEBUG
-                dbgprintf("Released shared buffer reference on %d of size %d by PID %d\n", m_shared_buffer_id, size(), process.pid());
+                dbg() << "Released shared buffer reference on " << m_shbuf_id << " of size " << size() << " by PID " << process.pid().value();
 #endif
                 sanity_check("deref_for_process");
                 destroy_if_unused();
@@ -144,19 +148,19 @@ void SharedBuffer::deref_for_process(Process& process)
     ASSERT_NOT_REACHED();
 }
 
-void SharedBuffer::disown(pid_t pid)
+void SharedBuffer::disown(ProcessID pid)
 {
     LOCKER(shared_buffers().lock());
-    for (int i = 0; i < m_refs.size(); ++i) {
+    for (size_t i = 0; i < m_refs.size(); ++i) {
         auto& ref = m_refs[i];
         if (ref.pid == pid) {
 #ifdef SHARED_BUFFER_DEBUG
-            dbgprintf("Disowning shared buffer %d of size %d by PID %d\n", m_shared_buffer_id, size(), pid);
+            dbg() << "Disowning shared buffer " << m_shbuf_id << " of size " << size() << " by PID " << pid.value();
 #endif
             m_total_refs -= ref.count;
-            m_refs.unstable_remove(i);
+            m_refs.unstable_take(i);
 #ifdef SHARED_BUFFER_DEBUG
-            dbgprintf("Disowned shared buffer %d of size %d by PID %d\n", m_shared_buffer_id, size(), pid);
+            dbg() << "Disowned shared buffer " << m_shbuf_id << " of size " << size() << " by PID " << pid.value();
 #endif
             destroy_if_unused();
             return;
@@ -170,10 +174,10 @@ void SharedBuffer::destroy_if_unused()
     sanity_check("destroy_if_unused");
     if (m_total_refs == 0) {
 #ifdef SHARED_BUFFER_DEBUG
-        kprintf("Destroying unused SharedBuffer{%p} id: %d\n", this, m_shared_buffer_id);
+        dbg() << "Destroying unused SharedBuffer{" << this << "} id: " << m_shbuf_id;
 #endif
         auto count_before = shared_buffers().resource().size();
-        shared_buffers().resource().remove(m_shared_buffer_id);
+        shared_buffers().resource().remove(m_shbuf_id);
         ASSERT(count_before != shared_buffers().resource().size());
     }
 }

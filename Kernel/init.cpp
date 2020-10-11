@@ -24,23 +24,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Devices/PATADiskDevice.h"
-#include "KSyms.h"
-#include "Process.h"
-#include "RTC.h"
-#include "Scheduler.h"
 #include <AK/Types.h>
-#include <Kernel/ACPI/ACPIDynamicParser.h>
-#include <Kernel/ACPI/ACPIStaticParser.h>
-#include <Kernel/ACPI/DMIDecoder.h>
+#include <Kernel/ACPI/DynamicParser.h>
+#include <Kernel/ACPI/Initialize.h>
 #include <Kernel/ACPI/MultiProcessorParser.h>
 #include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/CMOS.h>
+#include <Kernel/CommandLine.h>
 #include <Kernel/Devices/BXVGADevice.h>
-#include <Kernel/Devices/DebugLogDevice.h>
 #include <Kernel/Devices/DiskPartition.h>
 #include <Kernel/Devices/EBRPartitionTable.h>
-#include <Kernel/Devices/FloppyDiskDevice.h>
 #include <Kernel/Devices/FullDevice.h>
 #include <Kernel/Devices/GPTPartitionTable.h>
 #include <Kernel/Devices/KeyboardDevice.h>
@@ -48,11 +41,12 @@
 #include <Kernel/Devices/MBVGADevice.h>
 #include <Kernel/Devices/NullDevice.h>
 #include <Kernel/Devices/PATAChannel.h>
-#include <Kernel/Devices/PIT.h>
+#include <Kernel/Devices/PATADiskDevice.h>
 #include <Kernel/Devices/PS2MouseDevice.h>
 #include <Kernel/Devices/RandomDevice.h>
 #include <Kernel/Devices/SB16.h>
 #include <Kernel/Devices/SerialDevice.h>
+#include <Kernel/Devices/UHCIController.h>
 #include <Kernel/Devices/VMWareBackdoor.h>
 #include <Kernel/Devices/ZeroDevice.h>
 #include <Kernel/FileSystem/Ext2FileSystem.h>
@@ -62,19 +56,29 @@
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Interrupts/InterruptManagement.h>
 #include <Kernel/Interrupts/PIC.h>
-#include <Kernel/KParams.h>
+#include <Kernel/KSyms.h>
 #include <Kernel/Multiboot.h>
+#include <Kernel/Net/E1000NetworkAdapter.h>
 #include <Kernel/Net/LoopbackAdapter.h>
 #include <Kernel/Net/NetworkTask.h>
+#include <Kernel/Net/RTL8139NetworkAdapter.h>
 #include <Kernel/PCI/Access.h>
 #include <Kernel/PCI/Initializer.h>
+#include <Kernel/Process.h>
+#include <Kernel/RTC.h>
 #include <Kernel/Random.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/TTY/PTYMultiplexer.h>
 #include <Kernel/TTY/VirtualConsole.h>
+#include <Kernel/Tasks/FinalizerTask.h>
+#include <Kernel/Tasks/SyncTask.h>
+#include <Kernel/Time/TimeManagement.h>
 #include <Kernel/VM/MemoryManager.h>
 
 // Defined in the linker script
 typedef void (*ctor_func_t)();
+extern ctor_func_t start_heap_ctors;
+extern ctor_func_t end_heap_ctors;
 extern ctor_func_t start_ctors;
 extern ctor_func_t end_ctors;
 
@@ -85,55 +89,69 @@ namespace Kernel {
 
 [[noreturn]] static void init_stage2();
 static void setup_serial_debug();
-static void setup_acpi();
-static void setup_vmmouse();
-static void setup_pci();
-static void setup_interrupts();
+
+// boot.S expects these functions precisely this this. We declare them here
+// to ensure the signatures don't accidentally change.
+extern "C" void init_finished(u32 cpu);
+extern "C" [[noreturn]] void init_ap(u32 cpu, Processor* processor_info);
+extern "C" [[noreturn]] void init();
 
 VirtualConsole* tty0;
+
+static Processor s_bsp_processor; // global but let's keep it "private"
+
+// SerenityOS Kernel C++ entry point :^)
+//
+// This is where C++ execution begins, after boot.S transfers control here.
+//
+// The purpose of init() is to start multi-tasking. It does the bare minimum
+// amount of work needed to start the scheduler.
+//
+// Once multi-tasking is ready, we spawn a new thread that starts in the
+// init_stage2() function. Initialization continues there.
 
 extern "C" [[noreturn]] void init()
 {
     setup_serial_debug();
 
-    cpu_setup();
+    // We need to copy the command line before kmalloc is initialized,
+    // as it may overwrite parts of multiboot!
+    CommandLine::early_initialize(reinterpret_cast<const char*>(low_physical_to_virtual(multiboot_info_ptr->cmdline)));
 
+    s_bsp_processor.early_initialize(0);
+
+    // Invoke the constructors needed for the kernel heap
+    for (ctor_func_t* ctor = &start_heap_ctors; ctor < &end_heap_ctors; ctor++)
+        (*ctor)();
     kmalloc_init();
     slab_alloc_init();
 
-    new KParams(String(reinterpret_cast<const char*>(low_physical_to_virtual(multiboot_info_ptr->cmdline))));
+    s_bsp_processor.initialize(0);
 
-    MemoryManager::initialize();
+    CommandLine::initialize();
+    MemoryManager::initialize(0);
 
-    bool text_debug = KParams::the().has("text_debug");
-    gdt_init();
-    idt_init();
-
-    setup_acpi();
-    setup_interrupts();
-
-    new VFS;
-    new DebugLogDevice;
-
-    new Console;
-
-    kprintf("Starting SerenityOS...\n");
-
-    __stack_chk_guard = get_good_random<u32>();
-
-    PIT::initialize();
-    RTC::initialize();
-
-    // call global constructors after gtd and itd init
+    // Invoke all static global constructors in the kernel.
+    // Note that we want to do this as early as possible.
     for (ctor_func_t* ctor = &start_ctors; ctor < &end_ctors; ctor++)
         (*ctor)();
 
-    new KeyboardDevice;
-    new PS2MouseDevice;
-    setup_vmmouse();
+    APIC::initialize();
+    InterruptManagement::initialize();
+    ACPI::initialize();
 
-    new SB16;
-    new NullDevice;
+    VFS::initialize();
+    KeyboardDevice::initialize();
+    PS2MouseDevice::create();
+    Console::initialize();
+
+    klog() << "Starting SerenityOS...";
+
+    __stack_chk_guard = get_fast_random<u32>();
+
+    TimeManagement::initialize();
+
+    NullDevice::initialize();
     if (!get_serial_debug())
         new SerialDevice(SERIAL_COM1_ADDR, 64);
     new SerialDevice(SERIAL_COM2_ADDR, 65);
@@ -141,96 +159,121 @@ extern "C" [[noreturn]] void init()
     new SerialDevice(SERIAL_COM4_ADDR, 67);
 
     VirtualConsole::initialize();
-    tty0 = new VirtualConsole(0, VirtualConsole::AdoptCurrentVGABuffer);
-    new VirtualConsole(1);
+    tty0 = new VirtualConsole(0);
+    for (unsigned i = 1; i < s_max_virtual_consoles; i++) {
+        new VirtualConsole(i);
+    }
     VirtualConsole::switch_to(0);
 
-    // Sample test to see if the ACPI parser is working...
-    kprintf("ACPI: HPET table @ P 0x%x\n", ACPIParser::the().find_table("HPET").get());
+    Process::initialize();
+    Scheduler::initialize();
 
-    setup_pci();
-
-    PIT::initialize();
-
-    if (text_debug) {
-        dbgprintf("Text mode enabled\n");
-    } else {
-        if (multiboot_info_ptr->framebuffer_type == 1 || multiboot_info_ptr->framebuffer_type == 2) {
-            new MBVGADevice(
-                PhysicalAddress((u32)(multiboot_info_ptr->framebuffer_addr)),
-                multiboot_info_ptr->framebuffer_pitch,
-                multiboot_info_ptr->framebuffer_width,
-                multiboot_info_ptr->framebuffer_height);
-        } else {
-            new BXVGADevice;
-        }
+    {
+        RefPtr<Thread> init_stage2_thread;
+        Process::create_kernel_process(init_stage2_thread, "init_stage2", init_stage2);
+        // We need to make sure we drop the reference for init_stage2_thread
+        // before calling into Scheduler::start, otherwise we will have a
+        // dangling Thread that never gets cleaned up
     }
 
-    LoopbackAdapter::the();
-
-    Process::initialize();
-    Thread::initialize();
-
-    Thread* init_stage2_thread = nullptr;
-    Process::create_kernel_process(init_stage2_thread, "init_stage2", init_stage2);
-
-    Thread* syncd_thread = nullptr;
-    Process::create_kernel_process(syncd_thread, "syncd", [] {
-        for (;;) {
-            VFS::the().sync();
-            Thread::current->sleep(1 * TICKS_PER_SECOND);
-        }
-    });
-
-    Process::create_kernel_process(g_finalizer, "Finalizer", [] {
-        Thread::current->set_priority(THREAD_PRIORITY_LOW);
-        for (;;) {
-            {
-                InterruptDisabler disabler;
-                if (!g_finalizer_has_work)
-                    Thread::current->wait_on(*g_finalizer_wait_queue);
-                ASSERT(g_finalizer_has_work);
-                g_finalizer_has_work = false;
-            }
-            Thread::finalize_dying_threads();
-        }
-    });
-
-    Scheduler::pick_next();
-
-    sti();
-
-    Scheduler::idle_loop();
+    Scheduler::start();
     ASSERT_NOT_REACHED();
+}
+
+//
+// This is where C++ execution begins for APs, after boot.S transfers control here.
+//
+// The purpose of init_ap() is to initialize APs for multi-tasking.
+//
+extern "C" [[noreturn]] void init_ap(u32 cpu, Processor* processor_info)
+{
+    processor_info->early_initialize(cpu);
+
+    processor_info->initialize(cpu);
+    MemoryManager::initialize(cpu);
+
+    Scheduler::set_idle_thread(APIC::the().get_idle_thread(cpu));
+
+    Scheduler::start();
+    ASSERT_NOT_REACHED();
+}
+
+//
+// This method is called once a CPU enters the scheduler and its idle thread
+// At this point the initial boot stack can be freed
+//
+extern "C" void init_finished(u32 cpu)
+{
+    if (cpu == 0) {
+        // TODO: we can reuse the boot stack, maybe for kmalloc()?
+    } else {
+        APIC::the().init_finished(cpu);
+    }
 }
 
 void init_stage2()
 {
+    if (APIC::initialized() && APIC::the().enabled_processor_count() > 1) {
+        // We can't start the APs until we have a scheduler up and running.
+        // We need to be able to process ICI messages, otherwise another
+        // core may send too many and end up deadlocking once the pool is
+        // exhausted
+        APIC::the().boot_aps();
+    }
+
+    SyncTask::spawn();
+    FinalizerTask::spawn();
+
+    PCI::initialize();
+
+    bool text_mode = kernel_command_line().lookup("boot_mode").value_or("graphical") == "text";
+
+    if (text_mode) {
+        dbg() << "Text mode enabled";
+    } else {
+        bool bxvga_found = false;
+        PCI::enumerate([&](const PCI::Address&, PCI::ID id) {
+            if ((id.vendor_id == 0x1234 && id.device_id == 0x1111) || (id.vendor_id == 0x80ee && id.device_id == 0xbeef))
+                bxvga_found = true;
+        });
+
+        if (bxvga_found) {
+            BXVGADevice::initialize();
+        } else {
+            if (multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_RGB || multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT) {
+                new MBVGADevice(
+                    PhysicalAddress((u32)(multiboot_info_ptr->framebuffer_addr)),
+                    multiboot_info_ptr->framebuffer_pitch,
+                    multiboot_info_ptr->framebuffer_width,
+                    multiboot_info_ptr->framebuffer_height);
+            } else {
+                BXVGADevice::initialize();
+            }
+        }
+    }
+
+    UHCIController::detect();
+
+    E1000NetworkAdapter::detect();
+    RTL8139NetworkAdapter::detect();
+
+    LoopbackAdapter::the();
+
     Syscall::initialize();
 
     new ZeroDevice;
     new FullDevice;
     new RandomDevice;
-    new PTYMultiplexer;
+    PTYMultiplexer::initialize();
+    new SB16;
 
-    bool dmi_unreliable = KParams::the().has("dmi_unreliable");
-    if (dmi_unreliable) {
-        DMIDecoder::initialize_untrusted();
-    } else {
-        DMIDecoder::initialize();
-    }
+    bool force_pio = kernel_command_line().contains("force_pio");
 
-    bool text_debug = KParams::the().has("text_debug");
-    bool force_pio = KParams::the().has("force_pio");
-
-    auto root = KParams::the().get("root");
-    if (root.is_empty()) {
-        root = "/dev/hda";
-    }
+    auto root = kernel_command_line().lookup("root").value_or("/dev/hda");
 
     if (!root.starts_with("/dev/hda")) {
-        kprintf("init_stage2: root filesystem must be on the first IDE hard drive (/dev/hda)\n");
-        hang();
+        klog() << "init_stage2: root filesystem must be on the first IDE hard drive (/dev/hda)";
+        Processor::halt();
     }
 
     auto pata0 = PATAChannel::create(PATAChannel::ChannelType::Primary, force_pio);
@@ -239,150 +282,104 @@ void init_stage2()
     root = root.substring(strlen("/dev/hda"), root.length() - strlen("/dev/hda"));
 
     if (root.length()) {
-        bool ok;
-        unsigned partition_number = root.to_uint(ok);
+        auto partition_number = root.to_uint();
 
-        if (!ok) {
-            kprintf("init_stage2: couldn't parse partition number from root kernel parameter\n");
-            hang();
+        if (!partition_number.has_value()) {
+            klog() << "init_stage2: couldn't parse partition number from root kernel parameter";
+            Processor::halt();
         }
 
         MBRPartitionTable mbr(root_dev);
 
         if (!mbr.initialize()) {
-            kprintf("init_stage2: couldn't read MBR from disk\n");
-            hang();
+            klog() << "init_stage2: couldn't read MBR from disk";
+            Processor::halt();
         }
 
         if (mbr.is_protective_mbr()) {
-            dbgprintf("GPT Partitioned Storage Detected!\n");
+            dbg() << "GPT Partitioned Storage Detected!";
             GPTPartitionTable gpt(root_dev);
             if (!gpt.initialize()) {
-                kprintf("init_stage2: couldn't read GPT from disk\n");
-                hang();
+                klog() << "init_stage2: couldn't read GPT from disk";
+                Processor::halt();
             }
-            auto partition = gpt.partition(partition_number);
+            auto partition = gpt.partition(partition_number.value());
             if (!partition) {
-                kprintf("init_stage2: couldn't get partition %d\n", partition_number);
-                hang();
+                klog() << "init_stage2: couldn't get partition " << partition_number.value();
+                Processor::halt();
             }
             root_dev = *partition;
         } else {
-            dbgprintf("MBR Partitioned Storage Detected!\n");
+            dbg() << "MBR Partitioned Storage Detected!";
             if (mbr.contains_ebr()) {
                 EBRPartitionTable ebr(root_dev);
                 if (!ebr.initialize()) {
-                    kprintf("init_stage2: couldn't read EBR from disk\n");
-                    hang();
+                    klog() << "init_stage2: couldn't read EBR from disk";
+                    Processor::halt();
                 }
-                auto partition = ebr.partition(partition_number);
+                auto partition = ebr.partition(partition_number.value());
                 if (!partition) {
-                    kprintf("init_stage2: couldn't get partition %d\n", partition_number);
-                    hang();
+                    klog() << "init_stage2: couldn't get partition " << partition_number.value();
+                    Processor::halt();
                 }
                 root_dev = *partition;
             } else {
-                if (partition_number < 1 || partition_number > 4) {
-                    kprintf("init_stage2: invalid partition number %d; expected 1 to 4\n", partition_number);
-                    hang();
+                if (partition_number.value() < 1 || partition_number.value() > 4) {
+                    klog() << "init_stage2: invalid partition number " << partition_number.value() << "; expected 1 to 4";
+                    Processor::halt();
                 }
-                auto partition = mbr.partition(partition_number);
+                auto partition = mbr.partition(partition_number.value());
                 if (!partition) {
-                    kprintf("init_stage2: couldn't get partition %d\n", partition_number);
-                    hang();
+                    klog() << "init_stage2: couldn't get partition " << partition_number.value();
+                    Processor::halt();
                 }
                 root_dev = *partition;
             }
         }
     }
-    auto e2fs = Ext2FS::create(root_dev);
+    auto e2fs = Ext2FS::create(*FileDescription::create(root_dev));
     if (!e2fs->initialize()) {
-        kprintf("init_stage2: couldn't open root filesystem\n");
-        hang();
+        klog() << "init_stage2: couldn't open root filesystem";
+        Processor::halt();
     }
 
     if (!VFS::the().mount_root(e2fs)) {
-        kprintf("VFS::mount_root failed\n");
-        hang();
+        klog() << "VFS::mount_root failed";
+        Processor::halt();
     }
 
-    Process::current->set_root_directory(VFS::the().root_custody());
+    Process::current()->set_root_directory(VFS::the().root_custody());
 
-    dbgprintf("Load ksyms\n");
-    load_ksyms();
-    dbgprintf("Loaded ksyms\n");
-
-    // Now, detect whether or not there are actually any floppy disks attached to the system
-    u8 detect = CMOS::read(0x10);
-    RefPtr<FloppyDiskDevice> fd0;
-    RefPtr<FloppyDiskDevice> fd1;
-    if ((detect >> 4) & 0x4) {
-        fd0 = FloppyDiskDevice::create(FloppyDiskDevice::DriveType::Master);
-        kprintf("fd0 is 1.44MB floppy drive\n");
-    } else {
-        kprintf("fd0 type unsupported! Type == 0x%x\n", detect >> 4);
-    }
-
-    if (detect & 0x0f) {
-        fd1 = FloppyDiskDevice::create(FloppyDiskDevice::DriveType::Slave);
-        kprintf("fd1 is 1.44MB floppy drive");
-    } else {
-        kprintf("fd1 type unsupported! Type == 0x%x\n", detect & 0x0f);
-    }
+    load_kernel_symbol_table();
 
     int error;
 
-    // SystemServer will start WindowServer, which will be doing graphics.
-    // From this point on we don't want to touch the VGA text terminal or
-    // accept keyboard input.
-    if (text_debug) {
-        tty0->set_graphical(false);
-        Thread* thread = nullptr;
-        Process::create_user_process(thread, "/bin/Shell", (uid_t)0, (gid_t)0, (pid_t)0, error, {}, {}, tty0);
-        if (error != 0) {
-            kprintf("init_stage2: error spawning Shell: %d\n", error);
-            hang();
-        }
-        thread->set_priority(THREAD_PRIORITY_HIGH);
-    } else {
-        tty0->set_graphical(true);
-        Thread* thread = nullptr;
-        Process::create_user_process(thread, "/bin/SystemServer", (uid_t)0, (gid_t)0, (pid_t)0, error, {}, {}, tty0);
-        if (error != 0) {
-            kprintf("init_stage2: error spawning SystemServer: %d\n", error);
-            hang();
-        }
-        thread->set_priority(THREAD_PRIORITY_HIGH);
+    // FIXME: It would be nicer to set the mode from userspace.
+    tty0->set_graphical(!text_mode);
+    RefPtr<Thread> thread;
+    auto userspace_init = kernel_command_line().lookup("init").value_or("/bin/SystemServer");
+    Process::create_user_process(thread, userspace_init, (uid_t)0, (gid_t)0, ProcessID(0), error, {}, {}, tty0);
+    if (error != 0) {
+        klog() << "init_stage2: error spawning SystemServer: " << error;
+        Processor::halt();
     }
-    {
-        Thread* thread = nullptr;
-        Process::create_kernel_process(thread, "NetworkTask", NetworkTask_main);
-    }
+    thread->set_priority(THREAD_PRIORITY_HIGH);
 
-    Process::current->sys$exit(0);
+    NetworkTask::spawn();
+
+    Process::current()->sys$exit(0);
     ASSERT_NOT_REACHED();
 }
 
 void setup_serial_debug()
 {
-    // this is only used one time, directly below here. we can't use this part
-    // of libc at this point in the boot process, or we'd just pull strstr in
-    // from <string.h>.
-    auto bad_prefix_check = [](const char* str, const char* search) -> bool {
-        while (*search)
-            if (*search++ != *str++)
-                return false;
-
-        return true;
-    };
-
-    // serial_debug will output all the kprintf and dbgprintf data to COM1 at
+    // serial_debug will output all the klog() and dbg() data to COM1 at
     // 8-N-1 57600 baud. this is particularly useful for debugging the boot
     // process on live hardware.
     //
     // note: it must be the first option in the boot cmdline.
     u32 cmdline = low_physical_to_virtual(multiboot_info_ptr->cmdline);
-    if (cmdline && bad_prefix_check(reinterpret_cast<const char*>(cmdline), "serial_debug"))
+    if (cmdline && StringView(reinterpret_cast<const char*>(cmdline)).starts_with("serial_debug"))
         set_serial_debug(true);
 }
 
@@ -390,109 +387,8 @@ extern "C" {
 multiboot_info_t* multiboot_info_ptr;
 }
 
-// Define some Itanium C++ ABI methods to stop the linker from complaining
+// Define some Itanium C++ ABI methods to stop the linker from complaining.
 // If we actually call these something has gone horribly wrong
 void* __dso_handle __attribute__((visibility("hidden")));
 
-extern "C" int __cxa_atexit(void (*)(void*), void*, void*)
-{
-    ASSERT_NOT_REACHED();
-    return 0;
-}
-
-void setup_acpi()
-{
-    if (!KParams::the().has("acpi")) {
-        ACPIDynamicParser::initialize_without_rsdp();
-        return;
-    }
-
-    auto acpi = KParams::the().get("acpi");
-    if (acpi == "off") {
-        ACPIParser::initialize_limited();
-        return;
-    }
-    if (acpi == "on") {
-        ACPIDynamicParser::initialize_without_rsdp();
-        return;
-    }
-    if (acpi == "limited") {
-        ACPIStaticParser::initialize_without_rsdp();
-        return;
-    }
-    kprintf("acpi boot argmuent has an invalid value.\n");
-    hang();
-}
-
-void setup_vmmouse()
-{
-    VMWareBackdoor::initialize();
-    if (!KParams::the().has("vmmouse")) {
-        VMWareBackdoor::the().enable_absolute_vmmouse();
-        return;
-    }
-    auto vmmouse = KParams::the().get("vmmouse");
-    if (vmmouse == "off")
-        return;
-    if (vmmouse == "on") {
-        VMWareBackdoor::the().enable_absolute_vmmouse();
-        return;
-    }
-    kprintf("vmmouse boot argmuent has an invalid value.\n");
-    hang();
-}
-
-void setup_pci()
-{
-    if (!KParams::the().has("pci_mmio")) {
-        PCI::Initializer::the().test_and_initialize(false);
-        PCI::Initializer::the().dismiss();
-        return;
-    }
-    auto pci_mmio = KParams::the().get("pci_mmio");
-    if (pci_mmio == "on") {
-        PCI::Initializer::the().test_and_initialize(false);
-    } else if (pci_mmio == "off") {
-        PCI::Initializer::the().test_and_initialize(true);
-    } else {
-        kprintf("pci_mmio boot argmuent has an invalid value.\n");
-        hang();
-    }
-    PCI::Initializer::the().dismiss();
-}
-
-static void setup_interrupt_management()
-{
-    auto madt = ACPIParser::the().find_table("APIC");
-    if (madt.is_null()) {
-        InterruptManagement::initialize();
-        return;
-    }
-    AdvancedInterruptManagement::initialize(madt);
-}
-
-void setup_interrupts()
-{
-    setup_interrupt_management();
-
-    if (!KParams::the().has("smp")) {
-        InterruptManagement::the().switch_to_pic_mode();
-        return;
-    }
-    auto smp = KParams::the().get("smp");
-    if (smp == "off") {
-        InterruptManagement::the().switch_to_pic_mode();
-        return;
-    }
-    if (smp == "on") {
-        ASSERT_NOT_REACHED(); // FIXME: The IOAPIC mode is not stable yet so we can't use it now.
-        InterruptManagement::the().switch_to_ioapic_mode();
-        APIC::init();
-        APIC::enable_bsp();
-        return;
-    }
-
-    kprintf("smp boot argmuent has an invalid value.\n");
-    hang();
-}
 }

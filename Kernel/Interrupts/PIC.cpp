@@ -27,8 +27,9 @@
 #include <AK/Assertions.h>
 #include <AK/Types.h>
 #include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/IO.h>
+#include <Kernel/Interrupts/GenericInterruptHandler.h>
 #include <Kernel/Interrupts/PIC.h>
-#include <LibBareMetal/IO.h>
 
 namespace Kernel {
 
@@ -53,29 +54,35 @@ namespace Kernel {
 #define ICW4_BUF_MASTER 0x0C /* Buffered mode/master */
 #define ICW4_SFNM 0x10       /* Special fully nested (not) */
 
-bool inline static is_all_masked(u8 reg)
+bool inline static is_all_masked(u16 reg)
 {
-    return reg == 0xFF;
+    return reg == 0xFFFF;
 }
 
-void PIC::disable(u8 irq)
+bool PIC::is_enabled() const
+{
+    return !is_all_masked(m_cached_irq_mask) && !is_hard_disabled();
+}
+
+void PIC::disable(const GenericInterruptHandler& handler)
 {
     InterruptDisabler disabler;
-    if (is_hard_disabled())
+    ASSERT(!is_hard_disabled());
+    ASSERT(handler.interrupt_number() >= gsi_base() && handler.interrupt_number() < interrupt_vectors_count());
+    u8 irq = handler.interrupt_number();
+    if (m_cached_irq_mask & (1 << irq))
         return;
     u8 imr;
-    if (irq >= 8) {
+    if (irq & 8) {
         imr = IO::in8(PIC1_CMD);
-        imr |= 1 << (irq - 8);
+        imr |= 1 << (irq & 7);
         IO::out8(PIC1_CMD, imr);
     } else {
         imr = IO::in8(PIC0_CMD);
         imr |= 1 << irq;
         IO::out8(PIC0_CMD, imr);
     }
-
-    if (is_all_masked(imr))
-        m_enabled = false;
+    m_cached_irq_mask |= 1 << irq;
 }
 
 PIC::PIC()
@@ -83,45 +90,72 @@ PIC::PIC()
     initialize();
 }
 
-bool PIC::is_vector_enabled(u8 irq) const
+void PIC::spurious_eoi(const GenericInterruptHandler& handler) const
 {
-    u8 imr;
-    if (irq >= 8) {
-        imr = IO::in8(PIC1_CMD);
-        imr &= 1 << (irq - 8);
-    } else {
-        imr = IO::in8(PIC0_CMD);
-        imr &= 1 << irq;
+    ASSERT(handler.type() == HandlerType::SpuriousInterruptHandler);
+    if (handler.interrupt_number() == 7)
+        return;
+    if (handler.interrupt_number() == 15) {
+        IO::in8(PIC1_CMD); /* dummy read */
+        IO::out8(PIC0_CTL, 0x60 | (2));
     }
-    return imr != 0;
 }
 
-void PIC::enable(u8 irq)
+bool PIC::is_vector_enabled(u8 irq) const
+{
+    return m_cached_irq_mask & (1 << irq);
+}
+
+void PIC::enable(const GenericInterruptHandler& handler)
 {
     InterruptDisabler disabler;
-    if (is_hard_disabled())
+    ASSERT(!is_hard_disabled());
+    ASSERT(handler.interrupt_number() >= gsi_base() && handler.interrupt_number() < interrupt_vectors_count());
+    enable_vector(handler.interrupt_number());
+}
+
+void PIC::enable_vector(u8 irq)
+{
+    InterruptDisabler disabler;
+    ASSERT(!is_hard_disabled());
+    if (!(m_cached_irq_mask & (1 << irq)))
         return;
     u8 imr;
-    if (irq >= 8) {
+    if (irq & 8) {
         imr = IO::in8(PIC1_CMD);
-        imr &= ~(1 << (irq - 8));
+        imr &= ~(1 << (irq & 7));
         IO::out8(PIC1_CMD, imr);
     } else {
         imr = IO::in8(PIC0_CMD);
         imr &= ~(1 << irq);
         IO::out8(PIC0_CMD, imr);
     }
-    m_enabled = true;
+    m_cached_irq_mask &= ~(1 << irq);
 }
 
-void PIC::eoi(u8 irq) const
+void PIC::eoi(const GenericInterruptHandler& handler) const
 {
     InterruptDisabler disabler;
-    if (is_hard_disabled())
+    ASSERT(!is_hard_disabled());
+    u8 irq = handler.interrupt_number();
+    ASSERT(irq >= gsi_base() && irq < interrupt_vectors_count());
+    if ((1 << irq) & m_cached_irq_mask) {
+        spurious_eoi(handler);
         return;
-    if (irq >= 8)
-        IO::out8(PIC1_CTL, 0x20);
-    IO::out8(PIC0_CTL, 0x20);
+    }
+    eoi_interrupt(irq);
+}
+
+void PIC::eoi_interrupt(u8 irq) const
+{
+    if (irq & 8) {
+        IO::in8(PIC1_CMD); /* dummy read */
+        IO::out8(PIC1_CTL, 0x60 | (irq & 7));
+        IO::out8(PIC0_CTL, 0x60 | (2));
+        return;
+    }
+    IO::in8(PIC0_CMD); /* dummy read */
+    IO::out8(PIC0_CTL, 0x60 | irq);
 }
 
 void PIC::complete_eoi() const
@@ -136,6 +170,7 @@ void PIC::hard_disable()
     remap(0x20);
     IO::out8(PIC0_CMD, 0xff);
     IO::out8(PIC1_CMD, 0xff);
+    m_cached_irq_mask = 0xffff;
     IRQController::hard_disable();
 }
 
@@ -154,15 +189,16 @@ void PIC::remap(u8 offset)
     IO::out8(PIC1_CMD, SLAVE_INDEX);
 
     /* ICW4 (set x86 mode) */
-    IO::out8(PIC0_CMD, 0x01);
-    IO::out8(PIC1_CMD, 0x01);
+    IO::out8(PIC0_CMD, ICW4_8086);
+    IO::out8(PIC1_CMD, ICW4_8086);
 
     // Mask -- start out with all IRQs disabled.
     IO::out8(PIC0_CMD, 0xff);
     IO::out8(PIC1_CMD, 0xff);
+    m_cached_irq_mask = 0xffff;
 
     // ...except IRQ2, since that's needed for the master to let through slave interrupts.
-    enable(2);
+    enable_vector(2);
 }
 
 void PIC::initialize()
@@ -180,17 +216,17 @@ void PIC::initialize()
     IO::out8(PIC1_CMD, SLAVE_INDEX);
 
     /* ICW4 (set x86 mode) */
-    IO::out8(PIC0_CMD, 0x01);
-    IO::out8(PIC1_CMD, 0x01);
+    IO::out8(PIC0_CMD, ICW4_8086);
+    IO::out8(PIC1_CMD, ICW4_8086);
 
     // Mask -- start out with all IRQs disabled.
     IO::out8(PIC0_CMD, 0xff);
     IO::out8(PIC1_CMD, 0xff);
 
     // ...except IRQ2, since that's needed for the master to let through slave interrupts.
-    enable(2);
+    enable_vector(2);
 
-    kprintf("PIC(i8259): cascading mode, vectors 0x%b-0x%b\n", IRQ_VECTOR_BASE, IRQ_VECTOR_BASE + 0xf);
+    klog() << "PIC(i8259): cascading mode, vectors 0x" << String::format("%x", IRQ_VECTOR_BASE) << "-0x" << String::format("%x", IRQ_VECTOR_BASE + 0xf);
 }
 
 u16 PIC::get_isr() const

@@ -31,7 +31,6 @@
 namespace AK {
 
 class Bitmap;
-class BufferStream;
 class ByteBuffer;
 class DebugLogStream;
 class IPv4Address;
@@ -45,7 +44,30 @@ class StringBuilder;
 class StringImpl;
 class StringView;
 class URL;
+class FlyString;
+class Utf32View;
 class Utf8View;
+class InputStream;
+class InputMemoryStream;
+class DuplexMemoryStream;
+class OutputStream;
+class InputBitStream;
+class OutputMemoryStream;
+
+template<size_t Capacity>
+class CircularDuplexStream;
+
+template<typename T>
+class Span;
+
+template<typename T, size_t Size>
+struct Array;
+
+template<typename Container, typename ValueType>
+class SimpleIterator;
+
+using ReadonlyBytes = Span<const u8>;
+using Bytes = Span<u8>;
 
 template<typename T>
 class Atomic;
@@ -74,9 +96,6 @@ class HashMap;
 template<typename T>
 class Badge;
 
-template<typename T>
-class FixedArray;
-
 template<typename>
 class Function;
 
@@ -101,24 +120,30 @@ class OwnPtr;
 template<typename T>
 class WeakPtr;
 
-template<typename T, int inline_capacity = 0>
+template<typename T, size_t inline_capacity = 0>
 class Vector;
 
 }
 
+using AK::Array;
 using AK::Atomic;
 using AK::Badge;
 using AK::Bitmap;
-using AK::BufferStream;
 using AK::ByteBuffer;
+using AK::Bytes;
+using AK::CircularDuplexStream;
 using AK::CircularQueue;
 using AK::DebugLogStream;
 using AK::DoublyLinkedList;
-using AK::FixedArray;
+using AK::DuplexMemoryStream;
+using AK::FlyString;
 using AK::Function;
 using AK::HashMap;
 using AK::HashTable;
 using AK::InlineLinkedList;
+using AK::InputBitStream;
+using AK::InputMemoryStream;
+using AK::InputStream;
 using AK::IPv4Address;
 using AK::JsonArray;
 using AK::JsonObject;
@@ -127,15 +152,20 @@ using AK::LogStream;
 using AK::NonnullOwnPtr;
 using AK::NonnullRefPtr;
 using AK::Optional;
+using AK::OutputMemoryStream;
+using AK::OutputStream;
 using AK::OwnPtr;
+using AK::ReadonlyBytes;
 using AK::RefPtr;
 using AK::SharedBuffer;
 using AK::SinglyLinkedList;
+using AK::Span;
 using AK::String;
 using AK::StringBuilder;
 using AK::StringImpl;
 using AK::StringView;
 using AK::Traits;
 using AK::URL;
+using AK::Utf32View;
 using AK::Utf8View;
 using AK::Vector;

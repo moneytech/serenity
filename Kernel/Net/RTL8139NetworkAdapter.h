@@ -27,9 +27,11 @@
 #pragma once
 
 #include <AK/OwnPtr.h>
+#include <Kernel/IO.h>
 #include <Kernel/Net/NetworkAdapter.h>
 #include <Kernel/PCI/Access.h>
 #include <Kernel/PCI/Device.h>
+#include <Kernel/Random.h>
 
 namespace Kernel {
 
@@ -38,16 +40,18 @@ namespace Kernel {
 class RTL8139NetworkAdapter final : public NetworkAdapter
     , public PCI::Device {
 public:
-    static void detect(const PCI::Address&);
+    static void detect();
 
     RTL8139NetworkAdapter(PCI::Address, u8 irq);
     virtual ~RTL8139NetworkAdapter() override;
 
-    virtual void send_raw(const u8*, size_t) override;
+    virtual void send_raw(ReadonlyBytes) override;
     virtual bool link_up() override { return m_link_up; }
 
+    virtual const char* purpose() const override { return class_name(); }
+
 private:
-    virtual void handle_irq(RegisterState&) override;
+    virtual void handle_irq(const RegisterState&) override;
     virtual const char* class_name() const override { return "RTL8139NetworkAdapter"; }
 
     void reset();
@@ -62,13 +66,14 @@ private:
     u16 in16(u16 address);
     u32 in32(u16 address);
 
-    u16 m_io_base { 0 };
+    IOAddress m_io_base;
     u8 m_interrupt_line { 0 };
-    u32 m_rx_buffer_addr { 0 };
+    OwnPtr<Region> m_rx_buffer;
     u16 m_rx_buffer_offset { 0 };
-    u32 m_tx_buffer_addr[RTL8139_TX_BUFFER_COUNT];
+    Vector<OwnPtr<Region>> m_tx_buffers;
     u8 m_tx_next_buffer { 0 };
-    u32 m_packet_buffer { 0 };
+    OwnPtr<Region> m_packet_buffer;
     bool m_link_up { false };
+    EntropySource m_entropy_source;
 };
 }

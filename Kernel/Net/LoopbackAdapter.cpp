@@ -24,16 +24,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Singleton.h>
 #include <Kernel/Net/LoopbackAdapter.h>
 
 namespace Kernel {
 
+static AK::Singleton<LoopbackAdapter> s_loopback;
+
 LoopbackAdapter& LoopbackAdapter::the()
 {
-    static LoopbackAdapter* the;
-    if (!the)
-        the = new LoopbackAdapter;
-    return *the;
+    return *s_loopback;
 }
 
 LoopbackAdapter::LoopbackAdapter()
@@ -47,10 +47,10 @@ LoopbackAdapter::~LoopbackAdapter()
 {
 }
 
-void LoopbackAdapter::send_raw(const u8* data, size_t size)
+void LoopbackAdapter::send_raw(ReadonlyBytes payload)
 {
-    dbgprintf("LoopbackAdapter: Sending %d byte(s) to myself.\n", size);
-    did_receive(data, size);
+    dbg() << "LoopbackAdapter: Sending " << payload.size() << " byte(s) to myself.";
+    did_receive(payload);
 }
 
 }

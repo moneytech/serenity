@@ -25,6 +25,7 @@
  */
 
 #include "ZeroDevice.h"
+#include <AK/Memory.h>
 #include <AK/StdLibExtras.h>
 
 namespace Kernel {
@@ -38,21 +39,22 @@ ZeroDevice::~ZeroDevice()
 {
 }
 
-bool ZeroDevice::can_read(const FileDescription&) const
+bool ZeroDevice::can_read(const FileDescription&, size_t) const
 {
     return true;
 }
 
-ssize_t ZeroDevice::read(FileDescription&, u8* buffer, ssize_t size)
+KResultOr<size_t> ZeroDevice::read(FileDescription&, size_t, UserOrKernelBuffer& buffer, size_t size)
 {
-    ssize_t count = min(PAGE_SIZE, size);
-    memset(buffer, 0, (size_t)count);
+    ssize_t count = min(static_cast<size_t>(PAGE_SIZE), size);
+    if (!buffer.memset(0, count))
+        return KResult(-EFAULT);
     return count;
 }
 
-ssize_t ZeroDevice::write(FileDescription&, const u8*, ssize_t size)
+KResultOr<size_t> ZeroDevice::write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t size)
 {
-    return min(PAGE_SIZE, size);
+    return min(static_cast<size_t>(PAGE_SIZE), size);
 }
 
 }

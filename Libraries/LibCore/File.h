@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <AK/Result.h>
 #include <AK/String.h>
 #include <LibCore/IODevice.h>
 
@@ -36,6 +37,8 @@ class File final : public IODevice {
 public:
     virtual ~File() override;
 
+    static Result<NonnullRefPtr<File>, String> open(const String& filename, IODevice::OpenMode, mode_t = 0644);
+
     String filename() const { return m_filename; }
     void set_filename(const StringView& filename) { m_filename = filename; }
 
@@ -43,6 +46,9 @@ public:
     static bool is_directory(const String& filename);
 
     static bool exists(const String& filename);
+    static String real_path_for(const String& filename);
+    static String read_link(const StringView& link_path);
+    static bool ensure_parent_directories(const String& path);
 
     virtual bool open(IODevice::OpenMode) override;
 
@@ -52,12 +58,18 @@ public:
     };
     bool open(int fd, IODevice::OpenMode, ShouldCloseFileDescription);
 
+    static NonnullRefPtr<File> stdin();
+    static NonnullRefPtr<File> stdout();
+    static NonnullRefPtr<File> stderr();
+
 private:
     File(Object* parent = nullptr)
         : IODevice(parent)
     {
     }
     explicit File(const StringView&, Object* parent = nullptr);
+
+    bool open_impl(IODevice::OpenMode, mode_t);
 
     String m_filename;
     ShouldCloseFileDescription m_should_close_file_descriptor { ShouldCloseFileDescription::Yes };

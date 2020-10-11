@@ -25,6 +25,7 @@
  */
 
 #include <AK/Assertions.h>
+#include <AK/Badge.h>
 #include <AK/JsonObject.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
@@ -46,6 +47,17 @@ Object::Object(Object* parent, bool is_widget)
     all_objects().append(*this);
     if (m_parent)
         m_parent->add_child(*this);
+
+    REGISTER_READONLY_STRING_PROPERTY("class_name", class_name);
+    REGISTER_STRING_PROPERTY("name", name, set_name);
+
+    register_property(
+        "address", [this] { return FlatPtr(this); },
+        [](auto&) { return false; });
+
+    register_property(
+        "parent", [this] { return FlatPtr(this->parent()); },
+        [](auto&) { return false; });
 }
 
 Object::~Object()
@@ -88,7 +100,8 @@ void Object::add_child(Object& object)
     ASSERT(!object.parent() || object.parent() == this);
     object.m_parent = this;
     m_children.append(object);
-    event(*make<Core::ChildEvent>(Core::Event::ChildAdded, object));
+    Core::ChildEvent child_event(Core::Event::ChildAdded, object);
+    event(child_event);
 }
 
 void Object::insert_child_before(Object& new_child, Object& before_child)
@@ -97,18 +110,20 @@ void Object::insert_child_before(Object& new_child, Object& before_child)
     ASSERT(!new_child.parent() || new_child.parent() == this);
     new_child.m_parent = this;
     m_children.insert_before_matching(new_child, [&](auto& existing_child) { return existing_child.ptr() == &before_child; });
-    event(*make<Core::ChildEvent>(Core::Event::ChildAdded, new_child, &before_child));
+    Core::ChildEvent child_event(Core::Event::ChildAdded, new_child, &before_child);
+    event(child_event);
 }
 
 void Object::remove_child(Object& object)
 {
-    for (int i = 0; i < m_children.size(); ++i) {
+    for (size_t i = 0; i < m_children.size(); ++i) {
         if (m_children.ptr_at(i).ptr() == &object) {
             // NOTE: We protect the child so it survives the handling of ChildRemoved.
             NonnullRefPtr<Object> protector = object;
             object.m_parent = nullptr;
             m_children.remove(i);
-            event(*make<Core::ChildEvent>(Core::Event::ChildRemoved, object));
+            Core::ChildEvent child_event(Core::Event::ChildRemoved, object);
+            event(child_event);
             return;
         }
     }
@@ -151,7 +166,10 @@ void Object::dump_tree(int indent)
     for (int i = 0; i < indent; ++i) {
         printf(" ");
     }
-    printf("%s{%p}\n", class_name(), this);
+    printf("%s{%p}", class_name(), this);
+    if (!name().is_null())
+        printf(" %s", name().characters());
+    printf("\n");
 
     for_each_child([&](auto& child) {
         child.dump_tree(indent + 2);
@@ -166,10 +184,26 @@ void Object::deferred_invoke(Function<void(Object&)> invokee)
 
 void Object::save_to(JsonObject& json)
 {
-    json.set("class_name", class_name());
-    json.set("address", String::format("%p", this));
-    json.set("name", name());
-    json.set("parent", String::format("%p", parent()));
+    for (auto& it : m_properties) {
+        auto& property = it.value;
+        json.set(property->name(), property->get());
+    }
+}
+
+JsonValue Object::property(const StringView& name)
+{
+    auto it = m_properties.find(name);
+    if (it == m_properties.end())
+        return JsonValue();
+    return it->value->get();
+}
+
+bool Object::set_property(const StringView& name, const JsonValue& value)
+{
+    auto it = m_properties.find(name);
+    if (it == m_properties.end())
+        return false;
+    return it->value->set(value);
 }
 
 bool Object::is_ancestor_of(const Object& other) const
@@ -203,6 +237,25 @@ bool Object::is_visible_for_timer_purposes() const
     if (parent())
         return parent()->is_visible_for_timer_purposes();
     return true;
+}
+
+void Object::increment_inspector_count(Badge<RPCClient>)
+{
+    ++m_inspector_count;
+    if (m_inspector_count == 1)
+        did_begin_inspection();
+}
+
+void Object::decrement_inspector_count(Badge<RPCClient>)
+{
+    --m_inspector_count;
+    if (!m_inspector_count)
+        did_end_inspection();
+}
+
+void Object::register_property(const String& name, Function<JsonValue()> getter, Function<bool(const JsonValue&)> setter)
+{
+    m_properties.set(name, make<Property>(name, move(getter), move(setter)));
 }
 
 const LogStream& operator<<(const LogStream& stream, const Object& object)

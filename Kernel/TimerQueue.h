@@ -30,12 +30,14 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/OwnPtr.h>
 #include <AK/SinglyLinkedList.h>
-#include <Kernel/Devices/PIT.h>
+#include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
+typedef u64 TimerId;
+
 struct Timer {
-    u64 id;
+    TimerId id;
     u64 expires;
     Function<void()> callback;
     bool operator<(const Timer& rhs) const
@@ -52,26 +54,25 @@ struct Timer {
     }
 };
 
-enum TimeUnit {
-    MS = TICKS_PER_SECOND / 1000,
-    S = TICKS_PER_SECOND,
-    M = TICKS_PER_SECOND * 60
-};
-
 class TimerQueue {
 public:
+    TimerQueue();
     static TimerQueue& the();
 
-    u64 add_timer(NonnullOwnPtr<Timer>&&);
-    u64 add_timer(u64 duration, TimeUnit, Function<void()>&& callback);
-    bool cancel_timer(u64 id);
+    TimerId add_timer(NonnullOwnPtr<Timer>&&);
+    TimerId add_timer(timeval& timeout, Function<void()>&& callback);
+    bool cancel_timer(TimerId id);
     void fire();
 
 private:
     void update_next_timer_due();
 
+    u64 microseconds_to_ticks(u64 micro_seconds) { return micro_seconds * (m_ticks_per_second / 1'000'000); }
+    u64 seconds_to_ticks(u64 seconds) { return seconds * m_ticks_per_second; }
+
     u64 m_next_timer_due { 0 };
     u64 m_timer_id_count { 0 };
+    u64 m_ticks_per_second { 0 };
     SinglyLinkedList<NonnullOwnPtr<Timer>> m_timer_queue;
 };
 

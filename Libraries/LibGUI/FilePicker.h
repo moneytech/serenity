@@ -24,41 +24,64 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
+#pragma once
+
+#include <AK/LexicalPath.h>
 #include <AK/Optional.h>
-#include <LibCore/UserInfo.h>
+#include <LibCore/StandardPaths.h>
 #include <LibGUI/Dialog.h>
-#include <LibGUI/TableView.h>
+#include <LibGUI/ImageWidget.h>
+#include <LibGUI/Model.h>
 
 namespace GUI {
 
-class FilePicker final : public Dialog {
-    C_OBJECT(FilePicker)
+class FilePicker final
+    : public Dialog
+    , private ModelClient {
+    C_OBJECT(FilePicker);
+
 public:
     enum class Mode {
         Open,
+        OpenMultiple,
         Save
     };
 
-    static Optional<String> get_open_filepath(const String& window_title = {});
-    static Optional<String> get_save_filepath(const String& title, const String& extension);
+    enum class Options : unsigned {
+        None = 0,
+        DisablePreview = (1 << 0)
+    };
+
+    static Optional<String> get_open_filepath(Window* parent_window, Options options)
+    {
+        return get_open_filepath(parent_window, {}, options);
+    }
+    static Optional<String> get_open_filepath(Window* parent_window, const String& window_title = {}, Options options = Options::None);
+    static Optional<String> get_save_filepath(Window* parent_window, const String& title, const String& extension, Options options = Options::None);
     static bool file_exists(const StringView& path);
 
     virtual ~FilePicker() override;
 
-    FileSystemPath selected_file() const { return m_selected_file; }
+    LexicalPath selected_file() const { return m_selected_file; }
 
 private:
-    void set_preview(const FileSystemPath&);
+    bool have_preview() const { return m_preview_container; }
+    void set_preview(const LexicalPath&);
     void clear_preview();
     void on_file_return();
 
-    FilePicker(Mode type = Mode::Open, const StringView& file_name = "Untitled", const StringView& path = String(get_current_user_home_path()), Core::Object* parent = nullptr);
+    void set_path(const String&);
+
+    // ^GUI::ModelClient
+    virtual void model_did_update(unsigned) override;
+
+    FilePicker(Window* parent_window, Mode type = Mode::Open, Options = Options::None, const StringView& file_name = "Untitled", const StringView& path = Core::StandardPaths::home_directory());
 
     static String ok_button_name(Mode mode)
     {
         switch (mode) {
         case Mode::Open:
+        case Mode::OpenMultiple:
             return "Open";
         case Mode::Save:
             return "Save";
@@ -67,12 +90,14 @@ private:
         }
     }
 
-    RefPtr<TableView> m_view;
+    RefPtr<MultiView> m_view;
     NonnullRefPtr<FileSystemModel> m_model;
-    FileSystemPath m_selected_file;
+    LexicalPath m_selected_file;
 
     RefPtr<TextBox> m_filename_textbox;
-    RefPtr<Label> m_preview_image_label;
+    RefPtr<TextBox> m_location_textbox;
+    RefPtr<Frame> m_preview_container;
+    RefPtr<ImageWidget> m_preview_image;
     RefPtr<Label> m_preview_name_label;
     RefPtr<Label> m_preview_geometry_label;
     Mode m_mode { Mode::Open };

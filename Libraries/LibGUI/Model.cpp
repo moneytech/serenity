@@ -53,12 +53,13 @@ void Model::for_each_view(Function<void(AbstractView&)> callback)
         callback(*view);
 }
 
-void Model::did_update()
+void Model::did_update(unsigned flags)
 {
-    if (on_update)
-        on_update();
-    for_each_view([](auto& view) {
-        view.did_update_model();
+    for (auto* client : m_clients)
+        client->model_did_update(flags);
+
+    for_each_view([&](auto& view) {
+        view.did_update_model(flags);
     });
 }
 
@@ -67,19 +68,24 @@ ModelIndex Model::create_index(int row, int column, const void* data) const
     return ModelIndex(*this, row, column, const_cast<void*>(data));
 }
 
-ModelIndex Model::sibling(int row, int column, const ModelIndex& parent) const
+ModelIndex Model::index(int row, int column, const ModelIndex&) const
 {
-    if (!parent.is_valid())
-        return index(row, column, {});
-    int row_count = this->row_count(parent);
-    if (row < 0 || row > row_count)
-        return {};
-    return index(row, column, parent);
+    return create_index(row, column);
 }
 
 bool Model::accepts_drag(const ModelIndex&, const StringView&)
 {
     return false;
+}
+
+void Model::register_client(ModelClient& client)
+{
+    m_clients.set(&client);
+}
+
+void Model::unregister_client(ModelClient& client)
+{
+    m_clients.remove(&client);
 }
 
 }

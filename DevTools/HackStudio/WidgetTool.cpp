@@ -27,26 +27,30 @@
 #include "WidgetTool.h"
 #include <AK/LogStream.h>
 
+namespace HackStudio {
+
 void WidgetTool::on_mousedown(GUI::MouseEvent& event)
 {
     (void)event;
-    dbg() << "WidgetTool::on_mousedown";
+    dbgln("WidgetTool::on_mousedown");
 }
 
 void WidgetTool::on_mouseup(GUI::MouseEvent& event)
 {
     (void)event;
-    dbg() << "WidgetTool::on_mouseup";
+    dbgln("WidgetTool::on_mouseup");
 }
 
 void WidgetTool::on_mousemove(GUI::MouseEvent& event)
 {
     (void)event;
-    dbg() << "WidgetTool::on_mousemove";
+    dbgln("WidgetTool::on_mousemove");
 }
 
 void WidgetTool::on_keydown(GUI::KeyEvent& event)
 {
     (void)event;
-    dbg() << "WidgetTool::on_keydown";
+    dbgln("WidgetTool::on_keydown");
+}
+
 }

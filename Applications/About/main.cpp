@@ -24,13 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <LibGUI/AboutDialog.h>
 #include <LibGUI/Application.h>
-#include <LibGUI/BoxLayout.h>
-#include <LibGUI/Button.h>
-#include <LibGUI/Desktop.h>
-#include <LibGUI/Label.h>
-#include <LibGUI/Window.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Bitmap.h>
 #include <stdio.h>
 #include <sys/utsname.h>
 
@@ -41,7 +37,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer accept rpath", nullptr) < 0) {
         perror("pledge");
@@ -55,59 +51,6 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
-    auto window = GUI::Window::construct();
-    window->set_title("About SerenityOS");
-    Gfx::Rect window_rect { 0, 0, 240, 180 };
-    window_rect.center_within(GUI::Desktop::the().rect());
-    window->set_resizable(false);
-    window->set_rect(window_rect);
-
-    auto widget = GUI::Widget::construct();
-    window->set_main_widget(widget);
-    widget->set_fill_with_background_color(true);
-    widget->set_layout(make<GUI::VerticalBoxLayout>());
-    widget->layout()->set_margins({ 0, 8, 0, 8 });
-    widget->layout()->set_spacing(8);
-
-    auto icon_label = widget->add<GUI::Label>();
-    icon_label->set_icon(Gfx::Bitmap::load_from_file("/res/icons/serenity.png"));
-    icon_label->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
-    icon_label->set_preferred_size(icon_label->icon()->size());
-
-    auto label = widget->add<GUI::Label>();
-    label->set_font(Gfx::Font::default_bold_font());
-    label->set_text("SerenityOS");
-    label->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    label->set_preferred_size(0, 11);
-
-    utsname uts;
-    int rc = uname(&uts);
-    ASSERT(rc == 0);
-
-    auto version_label = widget->add<GUI::Label>();
-    version_label->set_text(String::format("Version %s", uts.release));
-    version_label->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    version_label->set_preferred_size(0, 11);
-
-    auto git_info_label = widget->add<GUI::Label>();
-    git_info_label->set_text(String::format("Built on %s@%s", GIT_BRANCH, GIT_COMMIT));
-    git_info_label->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    git_info_label->set_preferred_size(0, 11);
-
-    auto git_changes_label = widget->add<GUI::Label>();
-    git_changes_label->set_text(String::format("Changes: %s", GIT_CHANGES));
-    git_changes_label->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    git_changes_label->set_preferred_size(0, 11);
-
-    auto quit_button = widget->add<GUI::Button>();
-    quit_button->set_text("Okay");
-    quit_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
-    quit_button->set_preferred_size(100, 20);
-    quit_button->on_click = [](GUI::Button&) {
-        GUI::Application::the().quit(0);
-    };
-
-    quit_button->set_focus(true);
-    window->show();
-    return app.exec();
+    GUI::AboutDialog::show("SerenityOS", nullptr, nullptr, Gfx::Bitmap::load_from_file("/res/icons/16x16/ladybug.png"));
+    return app->exec();
 }

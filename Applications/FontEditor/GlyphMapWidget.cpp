@@ -32,6 +32,7 @@
 GlyphMapWidget::GlyphMapWidget(Gfx::Font& mutable_font)
     : m_font(mutable_font)
 {
+    m_glyph_count = mutable_font.glyph_count();
     set_relative_rect({ 0, 0, preferred_width(), preferred_height() });
 }
 
@@ -49,7 +50,7 @@ int GlyphMapWidget::preferred_height() const
     return rows() * (font().glyph_height() + m_vertical_spacing) + 2 + frame_thickness() * 2;
 }
 
-void GlyphMapWidget::set_selected_glyph(u8 glyph)
+void GlyphMapWidget::set_selected_glyph(int glyph)
 {
     if (m_selected_glyph == glyph)
         return;
@@ -59,11 +60,11 @@ void GlyphMapWidget::set_selected_glyph(u8 glyph)
     update();
 }
 
-Gfx::Rect GlyphMapWidget::get_outer_rect(u8 glyph) const
+Gfx::IntRect GlyphMapWidget::get_outer_rect(int glyph) const
 {
     int row = glyph / columns();
     int column = glyph % columns();
-    return Gfx::Rect {
+    return Gfx::IntRect {
         column * (font().max_glyph_width() + m_horizontal_spacing) + 1,
         row * (font().glyph_height() + m_vertical_spacing) + 1,
         font().max_glyph_width() + m_horizontal_spacing,
@@ -72,7 +73,7 @@ Gfx::Rect GlyphMapWidget::get_outer_rect(u8 glyph) const
         .translated(frame_thickness(), frame_thickness());
 }
 
-void GlyphMapWidget::update_glyph(u8 glyph)
+void GlyphMapWidget::update_glyph(int glyph)
 {
     update(get_outer_rect(glyph));
 }
@@ -88,8 +89,8 @@ void GlyphMapWidget::paint_event(GUI::PaintEvent& event)
     painter.fill_rect(frame_inner_rect(), palette().base());
 
     for (int glyph = 0; glyph < m_glyph_count; ++glyph) {
-        Gfx::Rect outer_rect = get_outer_rect(glyph);
-        Gfx::Rect inner_rect(
+        Gfx::IntRect outer_rect = get_outer_rect(glyph);
+        Gfx::IntRect inner_rect(
             outer_rect.x() + m_horizontal_spacing / 2,
             outer_rect.y() + m_vertical_spacing / 2,
             font().max_glyph_width(),
@@ -158,7 +159,8 @@ void GlyphMapWidget::keydown_event(GUI::KeyEvent& event)
     }
     if (!event.ctrl() && event.key() == KeyCode::Key_End) {
         int new_selection = selected_glyph() / m_columns * m_columns + (m_columns - 1);
-        new_selection = clamp(new_selection, 0, m_glyph_count - 1);
+        int max = m_glyph_count - 1;
+        new_selection = clamp(new_selection, 0, max);
         set_selected_glyph(new_selection);
         return;
     }

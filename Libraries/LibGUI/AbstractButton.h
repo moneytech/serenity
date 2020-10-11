@@ -31,7 +31,7 @@
 namespace GUI {
 
 class AbstractButton : public Widget {
-    C_OBJECT_ABSTRACT(GAbstractButton)
+    C_OBJECT_ABSTRACT(AbstractButton)
 public:
     virtual ~AbstractButton() override;
 
@@ -52,7 +52,7 @@ public:
     bool is_hovered() const { return m_hovered; }
     bool is_being_pressed() const { return m_being_pressed; }
 
-    virtual void click() = 0;
+    virtual void click(unsigned modifiers = 0) = 0;
     virtual bool accepts_focus() const override { return true; }
     virtual bool is_uncheckable() const { return true; }
 
@@ -70,7 +70,7 @@ protected:
     virtual void leave_event(Core::Event&) override;
     virtual void change_event(Event&) override;
 
-    void paint_text(Painter&, const Gfx::Rect&, const Gfx::Font&, Gfx::TextAlignment);
+    void paint_text(Painter&, const Gfx::IntRect&, const Gfx::Font&, Gfx::TextAlignment);
 
 private:
     virtual bool is_abstract_button() const final { return true; }
@@ -88,10 +88,6 @@ private:
 
 }
 
-template<>
-inline bool Core::is<GUI::AbstractButton>(const Core::Object& object)
-{
-    if (!is<GUI::Widget>(object))
-        return false;
-    return to<GUI::Widget>(object).is_abstract_button();
-}
+AK_BEGIN_TYPE_TRAITS(GUI::AbstractButton)
+static bool is_type(const Core::Object& object) { return is<GUI::Widget>(object) && downcast<GUI::Widget>(object).is_abstract_button(); }
+AK_END_TYPE_TRAITS()

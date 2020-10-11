@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,33 +27,34 @@
 #pragma once
 
 #include <AK/Function.h>
+#include <AK/LogStream.h>
 #include <AK/Types.h>
 
 namespace Kernel {
 
-
-#define PCI_VENDOR_ID 0x00           // word
-#define PCI_DEVICE_ID 0x02           // word
-#define PCI_COMMAND 0x04             // word
-#define PCI_STATUS 0x06              // word
-#define PCI_REVISION_ID 0x08         // byte
-#define PCI_PROG_IF 0x09             // byte
-#define PCI_SUBCLASS 0x0a            // byte
-#define PCI_CLASS 0x0b               // byte
-#define PCI_CACHE_LINE_SIZE 0x0c     // byte
-#define PCI_LATENCY_TIMER 0x0d       // byte
-#define PCI_HEADER_TYPE 0x0e         // byte
-#define PCI_BIST 0x0f                // byte
-#define PCI_BAR0 0x10                // u32
-#define PCI_BAR1 0x14                // u32
-#define PCI_BAR2 0x18                // u32
-#define PCI_BAR3 0x1C                // u32
-#define PCI_BAR4 0x20                // u32
-#define PCI_BAR5 0x24                // u32
-#define PCI_SUBSYSTEM_ID 0x2C        // u16
-#define PCI_SUBSYSTEM_VENDOR_ID 0x2E // u16
-#define PCI_INTERRUPT_LINE 0x3C      // byte
-#define PCI_SECONDARY_BUS 0x19       // byte
+#define PCI_VENDOR_ID 0x00            // word
+#define PCI_DEVICE_ID 0x02            // word
+#define PCI_COMMAND 0x04              // word
+#define PCI_STATUS 0x06               // word
+#define PCI_REVISION_ID 0x08          // byte
+#define PCI_PROG_IF 0x09              // byte
+#define PCI_SUBCLASS 0x0a             // byte
+#define PCI_CLASS 0x0b                // byte
+#define PCI_CACHE_LINE_SIZE 0x0c      // byte
+#define PCI_LATENCY_TIMER 0x0d        // byte
+#define PCI_HEADER_TYPE 0x0e          // byte
+#define PCI_BIST 0x0f                 // byte
+#define PCI_BAR0 0x10                 // u32
+#define PCI_BAR1 0x14                 // u32
+#define PCI_BAR2 0x18                 // u32
+#define PCI_BAR3 0x1C                 // u32
+#define PCI_BAR4 0x20                 // u32
+#define PCI_BAR5 0x24                 // u32
+#define PCI_SUBSYSTEM_ID 0x2C         // u16
+#define PCI_SUBSYSTEM_VENDOR_ID 0x2E  // u16
+#define PCI_CAPABILITIES_POINTER 0x34 // u8
+#define PCI_INTERRUPT_LINE 0x3C       // byte
+#define PCI_SECONDARY_BUS 0x19        // byte
 #define PCI_HEADER_TYPE_DEVICE 0
 #define PCI_HEADER_TYPE_BRIDGE 1
 #define PCI_TYPE_BRIDGE 0x0604
@@ -82,10 +83,13 @@ struct ID {
         return vendor_id != other.vendor_id || device_id != other.device_id;
     }
 };
-
+inline const LogStream& operator<<(const LogStream& stream, const ID value)
+{
+    return stream << "(" << String::format("%w", value.vendor_id) << ":" << String::format("%w", value.device_id) << ")";
+}
 struct Address {
 public:
-    Address() {}
+    Address() { }
     Address(u16 seg)
         : m_seg(seg)
         , m_bus(0)
@@ -112,6 +116,13 @@ public:
     bool is_null() const { return !m_bus && !m_slot && !m_function; }
     operator bool() const { return !is_null(); }
 
+    // Disable default implementations that would use surprising integer promotion.
+    bool operator==(const Address&) const = delete;
+    bool operator<=(const Address&) const = delete;
+    bool operator>=(const Address&) const = delete;
+    bool operator<(const Address&) const = delete;
+    bool operator>(const Address&) const = delete;
+
     u16 seg() const { return m_seg; }
     u8 bus() const { return m_bus; }
     u8 slot() const { return m_slot; }
@@ -128,6 +139,11 @@ protected:
     u8 m_slot { 0 };
     u8 m_function { 0 };
 };
+
+inline const LogStream& operator<<(const LogStream& stream, const Address value)
+{
+    return stream << "PCI [" << String::format("%w", value.seg()) << ":" << String::format("%b", value.bus()) << ":" << String::format("%b", value.slot()) << "." << String::format("%b", value.function()) << "]";
+}
 
 struct ChangeableAddress : public Address {
     ChangeableAddress()
@@ -163,11 +179,28 @@ struct ChangeableAddress : public Address {
     }
 };
 
+class PhysicalID {
+public:
+    PhysicalID(Address address, ID id)
+        : m_address(address)
+        , m_id(id)
+    {
+    }
+
+    const ID& id() const { return m_id; }
+    const Address& address() const { return m_address; }
+
+private:
+    Address m_address;
+    ID m_id;
+};
+
 ID get_id(PCI::Address);
-void enumerate_all(Function<void(Address, ID)> callback);
+void enumerate(Function<void(Address, ID)> callback);
 void enable_interrupt_line(Address);
 void disable_interrupt_line(Address);
 u8 get_interrupt_line(Address);
+void raw_access(Address, u32, size_t, u32);
 u32 get_BAR0(Address);
 u32 get_BAR1(Address);
 u32 get_BAR2(Address);
@@ -175,15 +208,15 @@ u32 get_BAR3(Address);
 u32 get_BAR4(Address);
 u32 get_BAR5(Address);
 u8 get_revision_id(Address);
+u8 get_programming_interface(Address);
 u8 get_subclass(Address);
 u8 get_class(Address);
 u16 get_subsystem_id(Address);
 u16 get_subsystem_vendor_id(Address);
-size_t get_BAR_Space_Size(Address, u8);
+size_t get_BAR_space_size(Address, u8);
 void enable_bus_mastering(Address);
 void disable_bus_mastering(Address);
 
-class Initializer;
 class Access;
 class MMIOAccess;
 class IOAccess;

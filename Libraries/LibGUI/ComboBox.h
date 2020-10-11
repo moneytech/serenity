@@ -30,6 +30,9 @@
 
 namespace GUI {
 
+class ComboBoxEditor;
+class ControlBoxButton;
+
 class ComboBox : public Widget {
     C_OBJECT(ComboBox)
 public:
@@ -46,6 +49,9 @@ public:
     const Model* model() const;
     void set_model(NonnullRefPtr<Model>);
 
+    size_t selected_index() const;
+    void set_selected_index(size_t index);
+
     bool only_allow_values_from_model() const { return m_only_allow_values_from_model; }
     void set_only_allow_values_from_model(bool);
 
@@ -60,8 +66,8 @@ protected:
     virtual void resize_event(ResizeEvent&) override;
 
 private:
-    RefPtr<TextBox> m_editor;
-    RefPtr<Button> m_open_button;
+    RefPtr<ComboBoxEditor> m_editor;
+    RefPtr<ControlBoxButton> m_open_button;
     RefPtr<Window> m_list_window;
     RefPtr<ListView> m_list_view;
     bool m_only_allow_values_from_model { false };

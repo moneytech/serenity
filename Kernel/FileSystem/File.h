@@ -30,10 +30,12 @@
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/Types.h>
+#include <AK/Weakable.h>
 #include <Kernel/Forward.h>
 #include <Kernel/KResult.h>
 #include <Kernel/UnixTypes.h>
-#include <LibBareMetal/Memory/VirtualAddress.h>
+#include <Kernel/UserOrKernelBuffer.h>
+#include <Kernel/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -64,26 +66,29 @@ namespace Kernel {
 //   - Called by mmap() when userspace wants to memory-map this File somewhere.
 //   - Should create a Region in the Process and return it if successful.
 
-class File : public RefCounted<File> {
+class File
+    : public RefCounted<File>
+    , public Weakable<File> {
 public:
     virtual ~File();
 
     virtual KResultOr<NonnullRefPtr<FileDescription>> open(int options);
-    virtual void close();
+    virtual KResult close();
 
-    virtual bool can_read(const FileDescription&) const = 0;
-    virtual bool can_write(const FileDescription&) const = 0;
+    virtual bool can_read(const FileDescription&, size_t) const = 0;
+    virtual bool can_write(const FileDescription&, size_t) const = 0;
 
-    virtual ssize_t read(FileDescription&, u8*, ssize_t) = 0;
-    virtual ssize_t write(FileDescription&, const u8*, ssize_t) = 0;
-    virtual int ioctl(FileDescription&, unsigned request, unsigned arg);
-    virtual KResultOr<Region*> mmap(Process&, FileDescription&, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot);
+    virtual KResultOr<size_t> read(FileDescription&, size_t, UserOrKernelBuffer&, size_t) = 0;
+    virtual KResultOr<size_t> write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t) = 0;
+    virtual int ioctl(FileDescription&, unsigned request, FlatPtr arg);
+    virtual KResultOr<Region*> mmap(Process&, FileDescription&, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot, bool shared);
+    virtual KResult stat(::stat&) const { return KResult(-EBADF); }
 
     virtual String absolute_path(const FileDescription&) const = 0;
 
     virtual KResult truncate(u64) { return KResult(-EINVAL); }
-    virtual KResult chown(uid_t, gid_t) { return KResult(-EBADF); }
-    virtual KResult chmod(mode_t) { return KResult(-EBADF); }
+    virtual KResult chown(FileDescription&, uid_t, gid_t) { return KResult(-EBADF); }
+    virtual KResult chmod(FileDescription&, mode_t) { return KResult(-EBADF); }
 
     virtual const char* class_name() const = 0;
 

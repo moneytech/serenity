@@ -70,7 +70,7 @@ void Slider::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    Gfx::Rect track_rect;
+    Gfx::IntRect track_rect;
 
     if (orientation() == Orientation::Horizontal) {
         track_rect = { inner_rect().x(), 0, inner_rect().width(), track_size() };
@@ -79,15 +79,17 @@ void Slider::paint_event(PaintEvent& event)
         track_rect = { 0, inner_rect().y(), track_size(), inner_rect().height() };
         track_rect.center_horizontally_within(inner_rect());
     }
-
     Gfx::StylePainter::paint_frame(painter, track_rect, palette(), Gfx::FrameShape::Panel, Gfx::FrameShadow::Sunken, 1);
-    Gfx::StylePainter::paint_button(painter, knob_rect(), palette(), Gfx::ButtonStyle::Normal, false, m_knob_hovered);
+    if (is_enabled())
+        Gfx::StylePainter::paint_button(painter, knob_rect(), palette(), Gfx::ButtonStyle::Normal, false, m_knob_hovered);
+    else
+        Gfx::StylePainter::paint_button(painter, knob_rect(), palette(), Gfx::ButtonStyle::Normal, true, m_knob_hovered);
 }
 
-Gfx::Rect Slider::knob_rect() const
+Gfx::IntRect Slider::knob_rect() const
 {
     auto inner_rect = this->inner_rect();
-    Gfx::Rect rect;
+    Gfx::IntRect rect;
     rect.set_secondary_offset_for_orientation(orientation(), 0);
     rect.set_secondary_size_for_orientation(orientation(), knob_secondary_size());
 
@@ -115,8 +117,6 @@ Gfx::Rect Slider::knob_rect() const
 
 void Slider::mousedown_event(MouseEvent& event)
 {
-    if (!is_enabled())
-        return;
     if (event.button() == MouseButton::Left) {
         if (knob_rect().contains(event.position())) {
             m_dragging = true;
@@ -135,8 +135,6 @@ void Slider::mousedown_event(MouseEvent& event)
 
 void Slider::mousemove_event(MouseEvent& event)
 {
-    if (!is_enabled())
-        return;
     set_knob_hovered(knob_rect().contains(event.position()));
     if (m_dragging) {
         float delta = event.position().primary_offset_for_orientation(orientation()) - m_drag_origin.primary_offset_for_orientation(orientation());
@@ -151,8 +149,6 @@ void Slider::mousemove_event(MouseEvent& event)
 
 void Slider::mouseup_event(MouseEvent& event)
 {
-    if (!is_enabled())
-        return;
     if (event.button() == MouseButton::Left) {
         m_dragging = false;
         return;
@@ -163,13 +159,15 @@ void Slider::mouseup_event(MouseEvent& event)
 
 void Slider::mousewheel_event(MouseEvent& event)
 {
-    if (!is_enabled())
-        return;
+    auto acceleration_modifier = m_step;
+
+    if (event.modifiers() == KeyModifier::Mod_Ctrl && knob_size_mode() == KnobSizeMode::Fixed)
+        acceleration_modifier *= 6;
 
     if (orientation() == Orientation::Horizontal)
-        set_value(value() - event.wheel_delta() * m_step);
+        set_value(value() - event.wheel_delta() * acceleration_modifier);
     else
-        set_value(value() + event.wheel_delta() * m_step);
+        set_value(value() + event.wheel_delta() * acceleration_modifier);
 
     Widget::mousewheel_event(event);
 }

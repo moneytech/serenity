@@ -52,7 +52,9 @@ func_defined post_fetch || post_fetch() {
 fetch() {
     if [ "$auth_type" == "sig" ] && [ ! -z "${auth_import_key}" ]; then
         # import gpg key if not existing locally
-        gpg --list-keys $auth_import_key || gpg --recv-key $auth_import_key
+        # The default keyserver keys.openpgp.org prints "new key but contains no user ID - skipped"
+        # and fails. Use a different key server.
+        gpg --list-keys $auth_import_key || gpg --keyserver hkps://keyserver.ubuntu.com --recv-key $auth_import_key
     fi
 
     OLDIFS=$IFS
@@ -144,6 +146,9 @@ func_defined patch_internal || patch_internal() {
         done
     fi
 }
+func_defined pre_configure || pre_configure() {
+    :
+}
 func_defined configure || configure() {
     run ./"$configscript" --host=i686-pc-serenity $configopts
 }
@@ -151,7 +156,10 @@ func_defined build || build() {
     run make $makeopts
 }
 func_defined install || install() {
-    run make DESTDIR="$SERENITY_ROOT"/Root $installopts install
+    run make DESTDIR="$SERENITY_ROOT"/Build/Root $installopts install
+}
+func_defined post_install || post_install() {
+    echo
 }
 func_defined clean || clean() {
     rm -rf "$workdir" *.out
@@ -210,10 +218,10 @@ uninstall() {
             for f in `cat plist`; do
                 case $f in
                     */)
-                        run rmdir "$SERENITY_ROOT/Root/$f" || true
+                        run rmdir "$SERENITY_ROOT/Build/Root/$f" || true
                         ;;
                     *)
-                        run rm -rf "$SERENITY_ROOT/Root/$f"
+                        run rm -rf "$SERENITY_ROOT/Build/Root/$f"
                         ;;
                 esac
             done
@@ -239,6 +247,7 @@ do_patch() {
 do_configure() {
     if [ "$useconfigure" = "true" ]; then
         echo "Configuring $port!"
+        pre_configure
         chmod +x "${workdir}"/"$configscript"
         configure
     else
@@ -252,6 +261,7 @@ do_build() {
 do_install() {
     echo "Installing $port!"
     install
+    post_install
     addtodb "${1:-}"
 }
 do_clean() {

@@ -37,11 +37,13 @@ public:
     explicit UnhandledInterruptHandler(u8 interrupt_vector);
     virtual ~UnhandledInterruptHandler();
 
-    virtual void handle_interrupt(RegisterState&) override;
+    virtual void handle_interrupt(const RegisterState&) override;
 
-    virtual bool eoi() override;
+    [[noreturn]] virtual bool eoi() override;
 
-    virtual HandlerPurpose purpose() const override { return HandlerPurpose::UnhandledInterruptHandler; }
+    virtual HandlerType type() const override { return HandlerType::UnhandledInterruptHandler; }
+    virtual const char* purpose() const override { return "Unhandled Interrupt Handler"; }
+    virtual const char* controller() const override { ASSERT_NOT_REACHED(); }
 
     virtual size_t sharing_devices_count() const override { return 0; }
     virtual bool is_shared_handler() const override { return false; }

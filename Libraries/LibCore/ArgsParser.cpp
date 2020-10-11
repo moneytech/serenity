@@ -29,6 +29,7 @@
 #include <getopt.h>
 #include <limits.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace Core {
 
@@ -37,25 +38,31 @@ ArgsParser::ArgsParser()
     add_option(m_show_help, "Display this message", "help", 0);
 }
 
-void ArgsParser::parse(int argc, char** argv)
+bool ArgsParser::parse(int argc, char** argv, bool exit_on_failure)
 {
-    auto print_usage_and_exit = [this, argv] {
+    auto print_usage_and_exit = [this, argv, exit_on_failure] {
         print_usage(stderr, argv[0]);
-        exit(1);
+        if (exit_on_failure)
+            exit(1);
     };
+
     Vector<option> long_options;
     StringBuilder short_options_builder;
 
     int index_of_found_long_option = -1;
 
-    for (int i = 0; i < m_options.size(); i++) {
+    // Tell getopt() to reset its internal state, and start scanning from optind = 1.
+    // We could also set optreset = 1, but the host platform may not support that.
+    optind = 0;
+
+    for (size_t i = 0; i < m_options.size(); i++) {
         auto& opt = m_options[i];
         if (opt.long_name) {
             option long_opt {
                 opt.long_name,
                 opt.requires_argument ? required_argument : no_argument,
                 &index_of_found_long_option,
-                i
+                static_cast<int>(i)
             };
             long_options.append(long_opt);
         }
@@ -78,6 +85,7 @@ void ArgsParser::parse(int argc, char** argv)
             // There was an error, and getopt() has already
             // printed its error message.
             print_usage_and_exit();
+            return false;
         }
 
         // Let's see what option we just found.
@@ -97,8 +105,9 @@ void ArgsParser::parse(int argc, char** argv)
 
         const char* arg = found_option->requires_argument ? optarg : nullptr;
         if (!found_option->accept_value(arg)) {
-            fprintf(stderr, "Invalid value for option %s\n", found_option->name_for_display().characters());
+            fprintf(stderr, "\033[31mInvalid value for option \033[1m%s\033[22m, dude\033[0m\n", found_option->name_for_display().characters());
             print_usage_and_exit();
+            return false;
         }
     }
 
@@ -107,17 +116,19 @@ void ArgsParser::parse(int argc, char** argv)
     int values_left = argc - optind;
     int num_values_for_arg[m_positional_args.size()];
     int total_values_required = 0;
-    for (int i = 0; i < m_positional_args.size(); i++) {
+    for (size_t i = 0; i < m_positional_args.size(); i++) {
         auto& arg = m_positional_args[i];
         num_values_for_arg[i] = arg.min_values;
         total_values_required += arg.min_values;
     }
 
-    if (total_values_required > values_left)
+    if (total_values_required > values_left) {
         print_usage_and_exit();
+        return false;
+    }
     int extra_values_to_distribute = values_left - total_values_required;
 
-    for (int i = 0; i < m_positional_args.size(); i++) {
+    for (size_t i = 0; i < m_positional_args.size(); i++) {
         auto& arg = m_positional_args[i];
         int extra_values_to_this_arg = min(arg.max_values - arg.min_values, extra_values_to_distribute);
         num_values_for_arg[i] += extra_values_to_this_arg;
@@ -129,15 +140,17 @@ void ArgsParser::parse(int argc, char** argv)
     if (extra_values_to_distribute > 0) {
         // We still have too many values :(
         print_usage_and_exit();
+        return false;
     }
 
-    for (int i = 0; i < m_positional_args.size(); i++) {
+    for (size_t i = 0; i < m_positional_args.size(); i++) {
         auto& arg = m_positional_args[i];
         for (int j = 0; j < num_values_for_arg[i]; j++) {
             const char* value = argv[optind++];
             if (!arg.accept_value(value)) {
                 fprintf(stderr, "Invalid value for argument %s\n", arg.name);
                 print_usage_and_exit();
+                return false;
             }
         }
     }
@@ -146,13 +159,17 @@ void ArgsParser::parse(int argc, char** argv)
     // Now let's show help if requested.
     if (m_show_help) {
         print_usage(stdout, argv[0]);
-        exit(0);
+        if (exit_on_failure)
+            exit(0);
+        return false;
     }
+
+    return true;
 }
 
 void ArgsParser::print_usage(FILE* file, const char* argv0)
 {
-    fprintf(file, "Usage:\n\t%s", argv0);
+    fprintf(file, "Usage:\n\t\033[1m%s\033[0m", argv0);
 
     for (auto& opt : m_options) {
         if (opt.long_name && !strcmp(opt.long_name, "help"))
@@ -190,13 +207,13 @@ void ArgsParser::print_usage(FILE* file, const char* argv0)
         };
         fprintf(file, "\t");
         if (opt.short_name) {
-            fprintf(file, "-%c", opt.short_name);
+            fprintf(file, "\033[1m-%c\033[0m", opt.short_name);
             print_argument();
         }
         if (opt.short_name && opt.long_name)
             fprintf(file, ", ");
         if (opt.long_name) {
-            fprintf(file, "--%s", opt.long_name);
+            fprintf(file, "\033[1m--%s\033[0m", opt.long_name);
             print_argument();
         }
 
@@ -209,7 +226,7 @@ void ArgsParser::print_usage(FILE* file, const char* argv0)
         fprintf(file, "\nArguments:\n");
 
     for (auto& arg : m_positional_args) {
-        fprintf(file, "\t%s", arg.name);
+        fprintf(file, "\t\033[1m%s\033[0m", arg.name);
         if (arg.help_string)
             fprintf(file, "\t%s", arg.help_string);
         fprintf(file, "\n");
@@ -263,9 +280,9 @@ void ArgsParser::add_option(int& value, const char* help_string, const char* lon
         short_name,
         value_name,
         [&value](const char* s) {
-            bool ok;
-            value = StringView(s).to_int(ok);
-            return ok;
+            auto opt = StringView(s).to_int();
+            value = opt.value_or(0);
+            return opt.has_value();
         }
     };
     add_option(move(option));
@@ -299,9 +316,31 @@ void ArgsParser::add_positional_argument(int& value, const char* help_string, co
         required == Required::Yes ? 1 : 0,
         1,
         [&value](const char* s) {
-            bool ok;
-            value = StringView(s).to_int(ok);
-            return ok;
+            auto opt = StringView(s).to_int();
+            value = opt.value_or(0);
+            return opt.has_value();
+        }
+    };
+    add_positional_argument(move(arg));
+}
+
+static constexpr bool isnan(double __x) { return __builtin_isnan(__x); }
+
+void ArgsParser::add_positional_argument(double& value, const char* help_string, const char* name, Required required)
+{
+    Arg arg {
+        help_string,
+        name,
+        required == Required::Yes ? 1 : 0,
+        1,
+        [&value](const char* s) {
+            char* p;
+            double v = strtod(s, &p);
+            bool valid_value = !isnan(v) && p != s;
+            if (valid_value) {
+                value = v;
+            }
+            return valid_value;
         }
     };
     add_positional_argument(move(arg));

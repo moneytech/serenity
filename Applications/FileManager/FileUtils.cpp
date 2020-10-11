@@ -25,15 +25,69 @@
  */
 
 #include "FileUtils.h"
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
+#include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/DirIterator.h>
+#include <LibCore/File.h>
+#include <LibGUI/MessageBox.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 namespace FileUtils {
+
+void delete_paths(const Vector<String>& paths, bool should_confirm, GUI::Window* parent_window)
+{
+    String message;
+    if (paths.size() == 1) {
+        message = String::formatted("Really delete {}?", LexicalPath(paths[0]).basename());
+    } else {
+        message = String::formatted("Really delete {} files?", paths.size());
+    }
+
+    if (should_confirm) {
+        auto result = GUI::MessageBox::show(parent_window,
+            message,
+            "Confirm deletion",
+            GUI::MessageBox::Type::Warning,
+            GUI::MessageBox::InputType::OKCancel);
+        if (result == GUI::MessageBox::ExecCancel)
+            return;
+    }
+
+    for (auto& path : paths) {
+        struct stat st;
+        if (lstat(path.characters(), &st)) {
+            GUI::MessageBox::show(parent_window,
+                String::formatted("lstat({}) failed: {}", path, strerror(errno)),
+                "Delete failed",
+                GUI::MessageBox::Type::Error);
+            break;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            String error_path;
+            int error = FileUtils::delete_directory(path, error_path);
+
+            if (error) {
+                GUI::MessageBox::show(parent_window,
+                    String::formatted("Failed to delete directory \"{}\": {}", error_path, strerror(error)),
+                    "Delete failed",
+                    GUI::MessageBox::Type::Error);
+                break;
+            }
+        } else if (unlink(path.characters()) < 0) {
+            int saved_errno = errno;
+            GUI::MessageBox::show(parent_window,
+                String::formatted("unlink(\"{}\") failed: {}", path, strerror(saved_errno)),
+                "Delete failed",
+                GUI::MessageBox::Type::Error);
+            break;
+        }
+    }
+}
 
 int delete_directory(String directory, String& file_that_caused_error)
 {
@@ -44,7 +98,7 @@ int delete_directory(String directory, String& file_that_caused_error)
     }
 
     while (iterator.has_next()) {
-        auto file_to_delete = String::format("%s/%s", directory.characters(), iterator.next_path().characters());
+        auto file_to_delete = String::formatted("{}/{}", directory, iterator.next_path());
         struct stat st;
 
         if (lstat(file_to_delete.characters(), &st)) {
@@ -81,24 +135,24 @@ bool copy_file_or_directory(const String& src_path, const String& dst_path)
         return copy_file_or_directory(src_path, get_duplicate_name(dst_path, duplicate_count));
     }
 
-    int src_fd = open(src_path.characters(), O_RDONLY);
-    if (src_fd < 0) {
+    auto source_or_error = Core::File::open(src_path, Core::IODevice::ReadOnly);
+    if (source_or_error.is_error())
         return false;
-    }
+
+    auto& source = *source_or_error.value();
 
     struct stat src_stat;
-    int rc = fstat(src_fd, &src_stat);
-    if (rc < 0) {
+    int rc = fstat(source.fd(), &src_stat);
+    if (rc < 0)
         return false;
-    }
 
-    if (S_ISDIR(src_stat.st_mode)) {
-        return copy_directory(src_path, dst_path);
-    }
-    return copy_file(src_path, dst_path, src_stat, src_fd);
+    if (source.is_directory())
+        return copy_directory(src_path, dst_path, src_stat);
+
+    return copy_file(dst_path, src_stat, source);
 }
 
-bool copy_directory(const String& src_path, const String& dst_path)
+bool copy_directory(const String& src_path, const String& dst_path, const struct stat& src_stat)
 {
     int rc = mkdir(dst_path.characters(), 0755);
     if (rc < 0) {
@@ -111,28 +165,37 @@ bool copy_directory(const String& src_path, const String& dst_path)
     while (di.has_next()) {
         String filename = di.next_path();
         bool is_copied = copy_file_or_directory(
-            String::format("%s/%s", src_path.characters(), filename.characters()),
-            String::format("%s/%s", dst_path.characters(), filename.characters()));
+            String::formatted("{}/{}", src_path, filename),
+            String::formatted("{}/{}", dst_path, filename));
         if (!is_copied) {
             return false;
         }
     }
+
+    auto my_umask = umask(0);
+    umask(my_umask);
+    rc = chmod(dst_path.characters(), src_stat.st_mode & ~my_umask);
+    if (rc < 0) {
+        return false;
+    }
     return true;
 }
 
-bool copy_file(const String& src_path, const String& dst_path, const struct stat& src_stat, int src_fd)
+bool copy_file(const String& dst_path, const struct stat& src_stat, Core::File& source)
 {
     int dst_fd = creat(dst_path.characters(), 0666);
     if (dst_fd < 0) {
         if (errno != EISDIR) {
             return false;
         }
-        auto dst_dir_path = String::format("%s/%s", dst_path.characters(), FileSystemPath(src_path).basename().characters());
+        auto dst_dir_path = String::formatted("{}/{}", dst_path, LexicalPath(source.filename()).basename());
         dst_fd = creat(dst_dir_path.characters(), 0666);
         if (dst_fd < 0) {
             return false;
         }
     }
+
+    ScopeGuard close_fd_guard([dst_fd]() { close(dst_fd); });
 
     if (src_stat.st_size > 0) {
         if (ftruncate(dst_fd, src_stat.st_size) < 0) {
@@ -143,7 +206,7 @@ bool copy_file(const String& src_path, const String& dst_path, const struct stat
 
     for (;;) {
         char buffer[32768];
-        ssize_t nread = read(src_fd, buffer, sizeof(buffer));
+        ssize_t nread = read(source.fd(), buffer, sizeof(buffer));
         if (nread < 0) {
             return false;
         }
@@ -169,8 +232,6 @@ bool copy_file(const String& src_path, const String& dst_path, const struct stat
         return false;
     }
 
-    close(src_fd);
-    close(dst_fd);
     return true;
 }
 
@@ -179,21 +240,21 @@ String get_duplicate_name(const String& path, int duplicate_count)
     if (duplicate_count == 0) {
         return path;
     }
-    FileSystemPath fsp(path);
+    LexicalPath lexical_path(path);
     StringBuilder duplicated_name;
     duplicated_name.append('/');
-    for (int i = 0; i < fsp.parts().size() - 1; ++i) {
-        duplicated_name.appendf("%s/", fsp.parts()[i].characters());
+    for (size_t i = 0; i < lexical_path.parts().size() - 1; ++i) {
+        duplicated_name.appendff("{}/", lexical_path.parts()[i]);
     }
-    auto prev_duplicate_tag = String::format("(%d)", duplicate_count);
-    auto title = fsp.title();
+    auto prev_duplicate_tag = String::formatted("({})", duplicate_count);
+    auto title = lexical_path.title();
     if (title.ends_with(prev_duplicate_tag)) {
         // remove the previous duplicate tag "(n)" so we can add a new tag.
         title = title.substring(0, title.length() - prev_duplicate_tag.length());
     }
-    duplicated_name.appendf("%s (%d)", fsp.title().characters(), duplicate_count);
-    if (!fsp.extension().is_empty()) {
-        duplicated_name.appendf(".%s", fsp.extension().characters());
+    duplicated_name.appendff("{} ({})", lexical_path.title(), duplicate_count);
+    if (!lexical_path.extension().is_empty()) {
+        duplicated_name.appendff(".{}", lexical_path.extension());
     }
     return duplicated_name.build();
 }

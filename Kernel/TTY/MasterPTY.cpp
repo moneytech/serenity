@@ -42,14 +42,15 @@ MasterPTY::MasterPTY(unsigned index)
     , m_index(index)
 {
     m_pts_name = String::format("/dev/pts/%u", m_index);
-    set_uid(Process::current->uid());
-    set_gid(Process::current->gid());
+    auto process = Process::current();
+    set_uid(process->uid());
+    set_gid(process->gid());
 }
 
 MasterPTY::~MasterPTY()
 {
 #ifdef MASTERPTY_DEBUG
-    dbgprintf("~MasterPTY(%u)\n", m_index);
+    dbg() << "~MasterPTY(" << m_index << ")";
 #endif
     PTYMultiplexer::the().notify_master_destroyed({}, m_index);
 }
@@ -59,29 +60,29 @@ String MasterPTY::pts_name() const
     return m_pts_name;
 }
 
-ssize_t MasterPTY::read(FileDescription&, u8* buffer, ssize_t size)
+KResultOr<size_t> MasterPTY::read(FileDescription&, size_t, UserOrKernelBuffer& buffer, size_t size)
 {
     if (!m_slave && m_buffer.is_empty())
         return 0;
     return m_buffer.read(buffer, size);
 }
 
-ssize_t MasterPTY::write(FileDescription&, const u8* buffer, ssize_t size)
+KResultOr<size_t> MasterPTY::write(FileDescription&, size_t, const UserOrKernelBuffer& buffer, size_t size)
 {
     if (!m_slave)
-        return -EIO;
+        return KResult(-EIO);
     m_slave->on_master_write(buffer, size);
     return size;
 }
 
-bool MasterPTY::can_read(const FileDescription&) const
+bool MasterPTY::can_read(const FileDescription&, size_t) const
 {
     if (!m_slave)
         return true;
     return !m_buffer.is_empty();
 }
 
-bool MasterPTY::can_write(const FileDescription&) const
+bool MasterPTY::can_write(const FileDescription&, size_t) const
 {
     return true;
 }
@@ -89,7 +90,7 @@ bool MasterPTY::can_write(const FileDescription&) const
 void MasterPTY::notify_slave_closed(Badge<SlavePTY>)
 {
 #ifdef MASTERPTY_DEBUG
-    dbgprintf("MasterPTY(%u): slave closed, my retains: %u, slave retains: %u\n", m_index, ref_count(), m_slave->ref_count());
+    dbg() << "MasterPTY(" << m_index << "): slave closed, my retains: " << ref_count() << ", slave retains: " << m_slave->ref_count();
 #endif
     // +1 ref for my MasterPTY::m_slave
     // +1 ref for FileDescription::m_device
@@ -97,12 +98,11 @@ void MasterPTY::notify_slave_closed(Badge<SlavePTY>)
         m_slave = nullptr;
 }
 
-ssize_t MasterPTY::on_slave_write(const u8* data, ssize_t size)
+ssize_t MasterPTY::on_slave_write(const UserOrKernelBuffer& data, ssize_t size)
 {
     if (m_closed)
         return -EIO;
-    m_buffer.write(data, size);
-    return size;
+    return m_buffer.write(data, size);
 }
 
 bool MasterPTY::can_write_from_slave() const
@@ -112,7 +112,7 @@ bool MasterPTY::can_write_from_slave() const
     return m_buffer.space_for_writing();
 }
 
-void MasterPTY::close()
+KResult MasterPTY::close()
 {
     if (ref_count() == 2) {
         InterruptDisabler disabler;
@@ -122,9 +122,11 @@ void MasterPTY::close()
 
         m_slave->hang_up();
     }
+
+    return KSuccess;
 }
 
-int MasterPTY::ioctl(FileDescription& description, unsigned request, unsigned arg)
+int MasterPTY::ioctl(FileDescription& description, unsigned request, FlatPtr arg)
 {
     REQUIRE_PROMISE(tty);
     if (!m_slave)

@@ -26,7 +26,9 @@
 
 #include <AK/Assertions.h>
 #include <AK/HashMap.h>
+#include <AK/Singleton.h>
 #include <AK/StringBuilder.h>
+#include <AK/StringView.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/Net/LocalSocket.h>
@@ -36,12 +38,10 @@
 namespace Kernel {
 
 static u32 s_lastFileSystemID;
-static HashMap<u32, FS*>* s_fs_map;
+static AK::Singleton<HashMap<u32, FS*>> s_fs_map;
 
 static HashMap<u32, FS*>& all_fses()
 {
-    if (!s_fs_map)
-        s_fs_map = new HashMap<u32, FS*>();
     return *s_fs_map;
 }
 
@@ -64,24 +64,11 @@ FS* FS::from_fsid(u32 id)
     return nullptr;
 }
 
-FS::DirectoryEntry::DirectoryEntry(const char* n, InodeIdentifier i, u8 ft)
-    : name_length(strlen(n))
+FS::DirectoryEntryView::DirectoryEntryView(const StringView& n, InodeIdentifier i, u8 ft)
+    : name(n)
     , inode(i)
     , file_type(ft)
 {
-    ASSERT(name_length < (int)sizeof(name));
-    memcpy(name, n, name_length);
-    name[name_length] = '\0';
-}
-
-FS::DirectoryEntry::DirectoryEntry(const char* n, size_t nl, InodeIdentifier i, u8 ft)
-    : name_length(nl)
-    , inode(i)
-    , file_type(ft)
-{
-    ASSERT(name_length < (int)sizeof(name));
-    memcpy(name, n, nl);
-    name[nl] = '\0';
 }
 
 void FS::sync()
@@ -106,7 +93,7 @@ void FS::lock_all()
     }
 }
 
-void FS::set_block_size(int block_size)
+void FS::set_block_size(size_t block_size)
 {
     ASSERT(block_size > 0);
     if (block_size == m_block_size)

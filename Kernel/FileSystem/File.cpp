@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/StringView.h>
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/FileSystem/FileDescription.h>
 
@@ -45,16 +46,17 @@ KResultOr<NonnullRefPtr<FileDescription>> File::open(int options)
     return description;
 }
 
-void File::close()
+KResult File::close()
 {
+    return KSuccess;
 }
 
-int File::ioctl(FileDescription&, unsigned, unsigned)
+int File::ioctl(FileDescription&, unsigned, FlatPtr)
 {
     return -ENOTTY;
 }
 
-KResultOr<Region*> File::mmap(Process&, FileDescription&, VirtualAddress, size_t, size_t, int)
+KResultOr<Region*> File::mmap(Process&, FileDescription&, VirtualAddress, size_t, size_t, int, bool)
 {
     return KResult(-ENODEV);
 }

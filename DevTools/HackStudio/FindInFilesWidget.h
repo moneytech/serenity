@@ -26,12 +26,16 @@
 
 #pragma once
 
+#include <LibGUI/Button.h>
+#include <LibGUI/TextBox.h>
 #include <LibGUI/Widget.h>
+
+namespace HackStudio {
 
 class FindInFilesWidget final : public GUI::Widget {
     C_OBJECT(FindInFilesWidget)
 public:
-    virtual ~FindInFilesWidget() override {}
+    virtual ~FindInFilesWidget() override { }
 
     void focus_textbox_and_select_all();
 
@@ -42,3 +46,5 @@ private:
     RefPtr<GUI::Button> m_button;
     RefPtr<GUI::TableView> m_result_view;
 };
+
+}

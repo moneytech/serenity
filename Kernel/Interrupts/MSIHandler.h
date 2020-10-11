@@ -33,11 +33,11 @@
 
 namespace Kernel {
 
-class MSIHandler : public GenericInterruptHandler {
+class MSIHandler final : public GenericInterruptHandler {
 public:
     virtual ~MSIHandler();
 
-    virtual void handle_interrupt(RegisterState&) override {}
+    virtual void handle_interrupt(RegisterState&) override { }
 
     void enable_irq();
     void disable_irq();

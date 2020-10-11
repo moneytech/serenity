@@ -25,6 +25,7 @@
  */
 
 #include "SnakeGame.h"
+#include <LibCore/ConfigFile.h>
 #include <LibGUI/FontDatabase.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
@@ -34,7 +35,7 @@
 
 SnakeGame::SnakeGame()
 {
-    set_font(GFontDatabase::the().get_by_name("Liza Regular"));
+    set_font(GUI::FontDatabase::the().get_by_name("Liza Regular"));
     m_fruit_bitmaps.append(*Gfx::Bitmap::load_from_file("/res/icons/snake/paprika.png"));
     m_fruit_bitmaps.append(*Gfx::Bitmap::load_from_file("/res/icons/snake/eggplant.png"));
     m_fruit_bitmaps.append(*Gfx::Bitmap::load_from_file("/res/icons/snake/cauliflower.png"));
@@ -42,8 +43,9 @@ SnakeGame::SnakeGame()
     srand(time(nullptr));
     reset();
 
-    m_high_score = 0;
-    m_high_score_text = "Best: 0";
+    auto config = Core::ConfigFile::get_for_app("Snake");
+    m_high_score = config->read_num_entry("Snake", "HighScore", 0);
+    m_high_score_text = String::format("Best: %u", m_high_score);
 }
 
 SnakeGame::~SnakeGame()
@@ -66,7 +68,7 @@ void SnakeGame::reset()
 
 bool SnakeGame::is_available(const Coordinate& coord)
 {
-    for (int i = 0; i < m_tail.size(); ++i) {
+    for (size_t i = 0; i < m_tail.size(); ++i) {
         if (m_tail[i] == coord)
             return false;
     }
@@ -90,13 +92,13 @@ void SnakeGame::spawn_fruit()
     m_fruit_type = rand() % m_fruit_bitmaps.size();
 }
 
-Gfx::Rect SnakeGame::score_rect() const
+Gfx::IntRect SnakeGame::score_rect() const
 {
     int score_width = font().width(m_score_text);
     return { width() - score_width - 2, height() - font().glyph_height() - 2, score_width, font().glyph_height() };
 }
 
-Gfx::Rect SnakeGame::high_score_rect() const
+Gfx::IntRect SnakeGame::high_score_rect() const
 {
     int high_score_width = font().width(m_high_score_text);
     return { 2, height() - font().glyph_height() - 2, high_score_width, font().glyph_height() };
@@ -134,7 +136,7 @@ void SnakeGame::timer_event(Core::TimerEvent&)
 
     dirty_cells.append(m_head);
 
-    for (int i = 0; i < m_tail.size(); ++i) {
+    for (size_t i = 0; i < m_tail.size(); ++i) {
         if (m_head == m_tail[i]) {
             game_over();
             return;
@@ -149,6 +151,8 @@ void SnakeGame::timer_event(Core::TimerEvent&)
             m_high_score = m_score;
             m_high_score_text = String::format("Best: %u", m_high_score);
             update(high_score_rect());
+            auto config = Core::ConfigFile::get_for_app("Snake");
+            config->write_num_entry("Snake", "HighScore", m_high_score);
         }
         update(score_rect());
         dirty_cells.append(m_fruit);
@@ -193,10 +197,10 @@ void SnakeGame::keydown_event(GUI::KeyEvent& event)
     }
 }
 
-Gfx::Rect SnakeGame::cell_rect(const Coordinate& coord) const
+Gfx::IntRect SnakeGame::cell_rect(const Coordinate& coord) const
 {
     auto game_rect = rect();
-    auto cell_size = Gfx::Size(game_rect.width() / m_columns, game_rect.height() / m_rows);
+    auto cell_size = Gfx::IntSize(game_rect.width() / m_columns, game_rect.height() / m_rows);
     return {
         coord.column * cell_size.width(),
         coord.row * cell_size.height(),
@@ -216,10 +220,10 @@ void SnakeGame::paint_event(GUI::PaintEvent& event)
         auto rect = cell_rect(part);
         painter.fill_rect(rect, Color::from_rgb(0xaaaa00));
 
-        Gfx::Rect left_side(rect.x(), rect.y(), 2, rect.height());
-        Gfx::Rect top_side(rect.x(), rect.y(), rect.width(), 2);
-        Gfx::Rect right_side(rect.right() - 1, rect.y(), 2, rect.height());
-        Gfx::Rect bottom_side(rect.x(), rect.bottom() - 1, rect.width(), 2);
+        Gfx::IntRect left_side(rect.x(), rect.y(), 2, rect.height());
+        Gfx::IntRect top_side(rect.x(), rect.y(), rect.width(), 2);
+        Gfx::IntRect right_side(rect.right() - 1, rect.y(), 2, rect.height());
+        Gfx::IntRect bottom_side(rect.x(), rect.bottom() - 1, rect.width(), 2);
         painter.fill_rect(left_side, Color::from_rgb(0xcccc00));
         painter.fill_rect(right_side, Color::from_rgb(0x888800));
         painter.fill_rect(top_side, Color::from_rgb(0xcccc00));

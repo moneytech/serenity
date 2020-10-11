@@ -24,13 +24,13 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGfx/Palette.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGfx/Palette.h>
 
 namespace GUI {
 
@@ -39,12 +39,12 @@ ToolBar::ToolBar(Orientation orientation, int button_size)
 {
     if (orientation == Orientation::Horizontal) {
         set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-        set_preferred_size(0, button_size + 12);
+        set_preferred_size(0, button_size + 8);
     } else {
         set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
-        set_preferred_size(button_size + 12, 0);
+        set_preferred_size(button_size + 8, 0);
     }
-    set_layout(make<BoxLayout>(orientation));
+    set_layout<BoxLayout>(orientation);
     layout()->set_spacing(0);
     layout()->set_margins({ 2, 2, 2, 2 });
 }
@@ -59,21 +59,21 @@ void ToolBar::add_action(Action& action)
     item->type = Item::Type::Action;
     item->action = action;
 
-    auto button = add<Button>();
+    auto& button = add<Button>();
     if (action.group() && action.group()->is_exclusive())
-        button->set_exclusive(true);
-    button->set_action(*item->action);
-    button->set_tooltip(item->action->text());
+        button.set_exclusive(true);
+    button.set_action(*item->action);
+    button.set_tooltip(item->action->text());
     if (item->action->icon())
-        button->set_icon(item->action->icon());
+        button.set_icon(item->action->icon());
     else
-        button->set_text(item->action->text());
+        button.set_text(item->action->text());
 
-    button->set_button_style(Gfx::ButtonStyle::CoolBar);
-    button->set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
-    ASSERT(button->size_policy(Orientation::Horizontal) == SizePolicy::Fixed);
-    ASSERT(button->size_policy(Orientation::Vertical) == SizePolicy::Fixed);
-    button->set_preferred_size(m_button_size + 8, m_button_size + 8);
+    button.set_button_style(Gfx::ButtonStyle::CoolBar);
+    button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
+    ASSERT(button.size_policy(Orientation::Horizontal) == SizePolicy::Fixed);
+    ASSERT(button.size_policy(Orientation::Vertical) == SizePolicy::Fixed);
+    button.set_preferred_size(m_button_size + 8, m_button_size + 8);
 
     m_items.append(move(item));
 }
@@ -84,9 +84,9 @@ public:
     SeparatorWidget()
     {
         set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
-        set_preferred_size(8, 22);
+        set_preferred_size(8, 18);
     }
-    virtual ~SeparatorWidget() override {}
+    virtual ~SeparatorWidget() override { }
 
     virtual void paint_event(PaintEvent& event) override
     {
@@ -111,10 +111,7 @@ void ToolBar::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    if (m_has_frame)
-        Gfx::StylePainter::paint_surface(painter, rect(), palette(), x() != 0, y() != 0);
-    else
-        painter.fill_rect(event.rect(), palette().button());
+    painter.fill_rect(event.rect(), palette().button());
 }
 
 }

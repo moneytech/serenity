@@ -28,86 +28,81 @@
 
 #ifdef __serenity__
 
-#include <AK/Assertions.h>
-#include <AK/Types.h>
-#include <AK/Atomic.h>
-#include <unistd.h>
+#    include <AK/Assertions.h>
+#    include <AK/Atomic.h>
+#    include <AK/Types.h>
+#    include <unistd.h>
 
 namespace LibThread {
 
 class Lock {
 public:
-    Lock() {}
-    ~Lock() {}
+    Lock() { }
+    ~Lock() { }
 
     void lock();
     void unlock();
 
 private:
-    AK::Atomic<bool> m_lock { false };
+    Atomic<pid_t> m_holder { 0 };
     u32 m_level { 0 };
-    int m_holder { -1 };
 };
 
 class Locker {
 public:
-    [[gnu::always_inline]] inline explicit Locker(Lock& l)
+    ALWAYS_INLINE explicit Locker(Lock& l)
         : m_lock(l)
     {
         lock();
     }
-    [[gnu::always_inline]] inline ~Locker() { unlock(); }
-    [[gnu::always_inline]] inline void unlock() { m_lock.unlock(); }
-    [[gnu::always_inline]] inline void lock() { m_lock.lock(); }
+    ALWAYS_INLINE ~Locker() { unlock(); }
+    ALWAYS_INLINE void unlock() { m_lock.unlock(); }
+    ALWAYS_INLINE void lock() { m_lock.lock(); }
 
 private:
     Lock& m_lock;
 };
 
-[[gnu::always_inline]] inline void Lock::lock()
+ALWAYS_INLINE void Lock::lock()
 {
-    int tid = gettid();
+    pid_t tid = gettid();
+    if (m_holder == tid) {
+        ++m_level;
+        return;
+    }
     for (;;) {
-        bool expected = false;
-        if (m_lock.compare_exchange_strong(expected, true, AK::memory_order_acq_rel)) {
-            if (m_holder == -1 || m_holder == tid) {
-                m_holder = tid;
-                ++m_level;
-                m_lock.store(false, AK::memory_order_release);
-                return;
-            }
-            m_lock.store(false, AK::memory_order_release);
+        int expected = 0;
+        if (m_holder.compare_exchange_strong(expected, tid, AK::memory_order_acq_rel)) {
+            m_level = 1;
+            return;
         }
-        donate(m_holder);
+        donate(expected);
     }
 }
 
 inline void Lock::unlock()
 {
-    for (;;) {
-        bool expected = false;
-        if (m_lock.compare_exchange_strong(expected, true, AK::memory_order_acq_rel)) {
-            ASSERT(m_holder == gettid());
-            ASSERT(m_level);
-            --m_level;
-            if (m_level) {
-                m_lock.store(false, AK::memory_order_release);
-                return;
-            }
-            m_holder = -1;
-            m_lock.store(false, AK::memory_order_release);
-            return;
-        }
-        donate(m_holder);
-    }
+    ASSERT(m_holder == gettid());
+    ASSERT(m_level);
+    if (m_level == 1)
+        m_holder.store(0, AK::memory_order_release);
+    else
+        --m_level;
 }
 
-#define LOCKER(lock) LibThread::Locker locker(lock)
+#    define LOCKER(lock) LibThread::Locker locker(lock)
 
 template<typename T>
 class Lockable {
 public:
-    Lockable() {}
+    Lockable() { }
+
+    template<typename... Args>
+    Lockable(Args&&... args)
+        : m_resource(forward(args)...)
+    {
+    }
+
     Lockable(T&& resource)
         : m_resource(move(resource))
     {
@@ -140,6 +135,6 @@ public:
 
 }
 
-#define LOCKER(x)
+#    define LOCKER(x)
 
 #endif

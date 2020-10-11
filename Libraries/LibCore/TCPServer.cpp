@@ -32,17 +32,28 @@
 #include <stdio.h>
 #include <sys/socket.h>
 
+#ifndef SOCK_NONBLOCK
+#    include <sys/ioctl.h>
+#endif
 namespace Core {
 
 TCPServer::TCPServer(Object* parent)
     : Object(parent)
 {
+#ifdef SOCK_NONBLOCK
     m_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+    m_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int option = 1;
+    ioctl(m_fd, FIONBIO, &option);
+    fcntl(m_fd, F_SETFD, FD_CLOEXEC);
+#endif
     ASSERT(m_fd >= 0);
 }
 
 TCPServer::~TCPServer()
 {
+    ::close(m_fd);
 }
 
 bool TCPServer::listen(const IPv4Address& address, u16 port)
@@ -50,14 +61,17 @@ bool TCPServer::listen(const IPv4Address& address, u16 port)
     if (m_listening)
         return false;
 
-    int rc;
     auto socket_address = SocketAddress(address, port);
     auto in = socket_address.to_sockaddr_in();
-    rc = ::bind(m_fd, (const sockaddr*)&in, sizeof(in));
-    ASSERT(rc == 0);
+    if (::bind(m_fd, (const sockaddr*)&in, sizeof(in)) < 0) {
+        perror("TCPServer::listen: bind");
+        return false;
+    }
 
-    rc = ::listen(m_fd, 5);
-    ASSERT(rc == 0);
+    if (::listen(m_fd, 5) < 0) {
+        perror("TCPServer::listen: listen");
+        return false;
+    }
     m_listening = true;
 
     m_notifier = Notifier::construct(m_fd, Notifier::Event::Read, this);

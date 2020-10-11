@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <errno.h>
 #include <mman.h>
 #include <stdio.h>
@@ -79,6 +79,12 @@ int set_mmap_name(void* addr, size_t size, const char* name)
 int madvise(void* address, size_t size, int advice)
 {
     int rc = syscall(SC_madvise, address, size, advice);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int minherit(void* address, size_t size, int inherit)
+{
+    int rc = syscall(SC_minherit, address, size, inherit);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 }

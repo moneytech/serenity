@@ -36,20 +36,41 @@ struct [[gnu::packed]] ioapic_mmio_regs
     volatile u32 window;
 };
 
-class ISAInterruptOverrideMetadata;
-class PCIInterruptOverrideMetadata;
+class PCIInterruptOverrideMetadata {
+public:
+    PCIInterruptOverrideMetadata(u8 bus_id, u8 polarity, u8 trigger_mode, u8 source_irq, u32 ioapic_id, u16 ioapic_int_pin);
+    u8 bus() const { return m_bus_id; }
+    u8 polarity() const { return m_polarity; }
+    u8 trigger_mode() const { return m_trigger_mode; }
+    u8 pci_interrupt_pin() const { return m_pci_interrupt_pin; }
+    u8 pci_device_number() const { return m_pci_device_number; }
+    u32 ioapic_id() const { return m_ioapic_id; }
+    u16 ioapic_interrupt_pin() const { return m_ioapic_interrupt_pin; }
+
+private:
+    const u8 m_bus_id;
+    const u8 m_polarity;
+    const u8 m_trigger_mode;
+    const u8 m_pci_interrupt_pin;
+    const u8 m_pci_device_number;
+    const u32 m_ioapic_id;
+    const u16 m_ioapic_interrupt_pin;
+};
 
 class IOAPIC final : public IRQController {
 public:
-    IOAPIC(ioapic_mmio_regs& regs, u32 gsi_base, Vector<RefPtr<ISAInterruptOverrideMetadata>>& overrides, Vector<RefPtr<PCIInterruptOverrideMetadata>>& pci_overrides);
-    virtual void enable(u8 number) override;
-    virtual void disable(u8 number) override;
+    IOAPIC(PhysicalAddress, u32 gsi_base);
+    virtual void enable(const GenericInterruptHandler&) override;
+    virtual void disable(const GenericInterruptHandler&) override;
     virtual void hard_disable() override;
-    virtual void eoi(u8 number) const override;
+    virtual void eoi(const GenericInterruptHandler&) const override;
+    virtual void spurious_eoi(const GenericInterruptHandler&) const override;
     virtual bool is_vector_enabled(u8 number) const override;
+    virtual bool is_enabled() const override;
     virtual u16 get_isr() const override;
     virtual u16 get_irr() const override;
-    virtual u32 get_gsi_base() const override { return m_gsi_base; }
+    virtual u32 gsi_base() const override { return m_gsi_base; }
+    virtual size_t interrupt_vectors_count() const { return m_redirection_entries_count; }
     virtual const char* model() const override { return "IOAPIC"; };
     virtual IRQControllerType type() const override { return IRQControllerType::i82093AA; }
 
@@ -65,7 +86,7 @@ private:
     bool is_redirection_entry_masked(u8 index) const;
 
     u8 read_redirection_entry_vector(u8 index) const;
-    int find_redirection_entry_by_vector(u8 vector) const;
+    Optional<int> find_redirection_entry_by_vector(u8 vector) const;
     void configure_redirections() const;
 
     void write_register(u32 index, u32 value) const;
@@ -76,12 +97,10 @@ private:
     void map_pci_interrupts();
     void isa_identity_map(int index);
 
-    ioapic_mmio_regs& m_physical_access_registers;
+    PhysicalAddress m_address;
     u32 m_gsi_base;
     u8 m_id;
     u8 m_version;
-    u32 m_redirection_entries;
-    Vector<RefPtr<ISAInterruptOverrideMetadata>> m_isa_interrupt_overrides;
-    Vector<RefPtr<PCIInterruptOverrideMetadata>> m_pci_interrupt_overrides;
+    size_t m_redirection_entries_count;
 };
 }

@@ -29,6 +29,8 @@
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
 
+namespace HackStudio {
+
 class WidgetTreeModel final : public GUI::Model {
 public:
     static NonnullRefPtr<WidgetTreeModel> create(GUI::Widget& root) { return adopt(*new WidgetTreeModel(root)); }
@@ -36,7 +38,7 @@ public:
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
-    virtual GUI::Variant data(const GUI::ModelIndex&, Role = Role::Display) const override;
+    virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
     virtual GUI::ModelIndex index(int row, int column, const GUI::ModelIndex& parent = GUI::ModelIndex()) const override;
     virtual GUI::ModelIndex parent_index(const GUI::ModelIndex&) const override;
     virtual void update() override;
@@ -47,5 +49,7 @@ private:
     explicit WidgetTreeModel(GUI::Widget&);
 
     NonnullRefPtr<GUI::Widget> m_root;
-    GIcon m_widget_icon;
+    GUI::Icon m_widget_icon;
 };
+
+}

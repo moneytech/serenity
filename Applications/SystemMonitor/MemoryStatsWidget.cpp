@@ -50,29 +50,31 @@ MemoryStatsWidget::MemoryStatsWidget(GraphWidget& graph)
     s_the = this;
 
     set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    set_preferred_size(0, 72);
+    set_preferred_size(0, 110);
 
-    set_layout(make<GUI::VerticalBoxLayout>());
+    set_layout<GUI::VerticalBoxLayout>();
     layout()->set_margins({ 0, 8, 0, 0 });
     layout()->set_spacing(3);
 
     auto build_widgets_for_label = [this](const String& description) -> RefPtr<GUI::Label> {
-        auto container = add<GUI::Widget>();
-        container->set_layout(make<GUI::HorizontalBoxLayout>());
-        container->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
-        container->set_preferred_size(275, 12);
-        auto description_label = container->add<GUI::Label>(description);
-        description_label->set_font(Gfx::Font::default_bold_font());
-        description_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        auto label = container->add<GUI::Label>();
-        label->set_text_alignment(Gfx::TextAlignment::CenterRight);
+        auto& container = add<GUI::Widget>();
+        container.set_layout<GUI::HorizontalBoxLayout>();
+        container.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
+        container.set_preferred_size(275, 12);
+        auto& description_label = container.add<GUI::Label>(description);
+        description_label.set_font(Gfx::Font::default_bold_font());
+        description_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
+        auto& label = container.add<GUI::Label>();
+        label.set_text_alignment(Gfx::TextAlignment::CenterRight);
         return label;
     };
 
     m_user_physical_pages_label = build_widgets_for_label("Userspace physical:");
     m_supervisor_physical_pages_label = build_widgets_for_label("Supervisor physical:");
-    m_kmalloc_label = build_widgets_for_label("Kernel heap:");
-    m_kmalloc_count_label = build_widgets_for_label("Calls kmalloc/kfree:");
+    m_kmalloc_space_label = build_widgets_for_label("Kernel heap:");
+    m_kmalloc_count_label = build_widgets_for_label("Calls kmalloc:");
+    m_kfree_count_label = build_widgets_for_label("Calls kfree:");
+    m_kmalloc_difference_label = build_widgets_for_label("Difference:");
 
     refresh();
 }
@@ -98,7 +100,9 @@ void MemoryStatsWidget::refresh()
         ASSERT_NOT_REACHED();
 
     auto file_contents = proc_memstat->read_all();
-    auto json = JsonValue::from_string(file_contents).as_object();
+    auto json_result = JsonValue::from_string(file_contents);
+    ASSERT(json_result.has_value());
+    auto json = json_result.value().as_object();
 
     unsigned kmalloc_eternal_allocated = json.get("kmalloc_eternal_allocated").to_u32();
     (void)kmalloc_eternal_allocated;
@@ -115,10 +119,12 @@ void MemoryStatsWidget::refresh()
     size_t user_pages_available = user_physical_allocated + user_physical_available;
     size_t supervisor_pages_available = super_physical_alloc + super_physical_free;
 
-    m_kmalloc_label->set_text(String::format("%uK/%uK", bytes_to_kb(kmalloc_allocated), bytes_to_kb(kmalloc_sum_available)));
-    m_user_physical_pages_label->set_text(String::format("%uK/%uK", page_count_to_kb(user_physical_allocated), page_count_to_kb(user_pages_available)));
-    m_supervisor_physical_pages_label->set_text(String::format("%uK/%uK", page_count_to_kb(super_physical_alloc), page_count_to_kb(supervisor_pages_available)));
-    m_kmalloc_count_label->set_text(String::format("%u/%u (+%u)", kmalloc_call_count, kfree_call_count, kmalloc_call_count - kfree_call_count));
+    m_kmalloc_space_label->set_text(String::formatted("{}K/{}K", bytes_to_kb(kmalloc_allocated), bytes_to_kb(kmalloc_sum_available)));
+    m_user_physical_pages_label->set_text(String::formatted("{}K/{}K", page_count_to_kb(user_physical_allocated), page_count_to_kb(user_pages_available)));
+    m_supervisor_physical_pages_label->set_text(String::formatted("{}K/{}K", page_count_to_kb(super_physical_alloc), page_count_to_kb(supervisor_pages_available)));
+    m_kmalloc_count_label->set_text(String::formatted("{}", kmalloc_call_count));
+    m_kfree_count_label->set_text(String::formatted("{}", kfree_call_count));
+    m_kmalloc_difference_label->set_text(String::formatted("{:+}", kmalloc_call_count - kfree_call_count));
 
     m_graph.set_max(page_count_to_kb(user_pages_available));
     m_graph.add_value(page_count_to_kb(user_physical_allocated));

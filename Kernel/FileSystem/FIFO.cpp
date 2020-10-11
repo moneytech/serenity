@@ -25,7 +25,9 @@
  */
 
 #include <AK/HashTable.h>
+#include <AK/Singleton.h>
 #include <AK/StdLibExtras.h>
+#include <AK/StringView.h>
 #include <Kernel/FileSystem/FIFO.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/Lock.h>
@@ -36,11 +38,10 @@
 
 namespace Kernel {
 
-Lockable<HashTable<FIFO*>>& all_fifos()
+static AK::Singleton<Lockable<HashTable<FIFO*>>> s_table;
+
+static Lockable<HashTable<FIFO*>>& all_fifos()
 {
-    static Lockable<HashTable<FIFO*>>* s_table;
-    if (!s_table)
-        s_table = new Lockable<HashTable<FIFO*>>;
     return *s_table;
 }
 
@@ -56,6 +57,35 @@ NonnullRefPtr<FileDescription> FIFO::open_direction(FIFO::Direction direction)
     auto description = FileDescription::create(*this);
     attach(direction);
     description->set_fifo_direction({}, direction);
+    return description;
+}
+
+NonnullRefPtr<FileDescription> FIFO::open_direction_blocking(FIFO::Direction direction)
+{
+    Locker locker(m_open_lock);
+
+    auto description = open_direction(direction);
+
+    if (direction == Direction::Reader) {
+        m_read_open_queue.wake_all();
+
+        if (m_writers == 0) {
+            locker.unlock();
+            Thread::current()->wait_on(m_write_open_queue, "FIFO");
+            locker.lock();
+        }
+    }
+
+    if (direction == Direction::Writer) {
+        m_write_open_queue.wake_all();
+
+        if (m_readers == 0) {
+            locker.unlock();
+            Thread::current()->wait_on(m_read_open_queue, "FIFO");
+            locker.lock();
+        }
+    }
+
     return description;
 }
 
@@ -78,12 +108,12 @@ void FIFO::attach(Direction direction)
     if (direction == Direction::Reader) {
         ++m_readers;
 #ifdef FIFO_DEBUG
-        kprintf("open reader (%u)\n", m_readers);
+        klog() << "open reader (" << m_readers << ")";
 #endif
     } else if (direction == Direction::Writer) {
         ++m_writers;
 #ifdef FIFO_DEBUG
-        kprintf("open writer (%u)\n", m_writers);
+        klog() << "open writer (" << m_writers << ")";
 #endif
     }
 }
@@ -92,58 +122,55 @@ void FIFO::detach(Direction direction)
 {
     if (direction == Direction::Reader) {
 #ifdef FIFO_DEBUG
-        kprintf("close reader (%u - 1)\n", m_readers);
+        klog() << "close reader (" << m_readers << " - 1)";
 #endif
         ASSERT(m_readers);
         --m_readers;
     } else if (direction == Direction::Writer) {
 #ifdef FIFO_DEBUG
-        kprintf("close writer (%u - 1)\n", m_writers);
+        klog() << "close writer (" << m_writers << " - 1)";
 #endif
         ASSERT(m_writers);
         --m_writers;
     }
 }
 
-bool FIFO::can_read(const FileDescription&) const
+bool FIFO::can_read(const FileDescription&, size_t) const
 {
     return !m_buffer.is_empty() || !m_writers;
 }
 
-bool FIFO::can_write(const FileDescription&) const
+bool FIFO::can_write(const FileDescription&, size_t) const
 {
     return m_buffer.space_for_writing() || !m_readers;
 }
 
-ssize_t FIFO::read(FileDescription&, u8* buffer, ssize_t size)
+KResultOr<size_t> FIFO::read(FileDescription&, size_t, UserOrKernelBuffer& buffer, size_t size)
 {
     if (!m_writers && m_buffer.is_empty())
         return 0;
-#ifdef FIFO_DEBUG
-    dbgprintf("fifo: read(%u)\n", size);
-#endif
-    ssize_t nread = m_buffer.read(buffer, size);
-#ifdef FIFO_DEBUG
-    dbgprintf("   -> read (%c) %u\n", buffer[0], nread);
-#endif
-    return nread;
+    return m_buffer.read(buffer, size);
 }
 
-ssize_t FIFO::write(FileDescription&, const u8* buffer, ssize_t size)
+KResultOr<size_t> FIFO::write(FileDescription&, size_t, const UserOrKernelBuffer& buffer, size_t size)
 {
     if (!m_readers) {
-        Thread::current->send_signal(SIGPIPE, Process::current);
+        Thread::current()->send_signal(SIGPIPE, Process::current());
         return -EPIPE;
     }
-#ifdef FIFO_DEBUG
-    dbgprintf("fifo: write(%p, %u)\n", buffer, size);
-#endif
     return m_buffer.write(buffer, size);
 }
 
 String FIFO::absolute_path(const FileDescription&) const
 {
     return String::format("fifo:%u", m_fifo_id);
+}
+
+KResult FIFO::stat(::stat& st) const
+{
+    memset(&st, 0, sizeof(st));
+    st.st_mode = S_IFIFO;
+    return KSuccess;
 }
 
 }

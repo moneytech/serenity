@@ -26,12 +26,12 @@
  */
 
 #include "WaveWidget.h"
-#include "AudioEngine.h"
+#include "TrackManager.h"
+#include <AK/NumericLimits.h>
 #include <LibGUI/Painter.h>
-#include <limits>
 
-WaveWidget::WaveWidget(AudioEngine& audio_engine)
-    : m_audio_engine(audio_engine)
+WaveWidget::WaveWidget(TrackManager& track_manager)
+    : m_track_manager(track_manager)
 {
 }
 
@@ -43,7 +43,7 @@ int WaveWidget::sample_to_y(int sample) const
 {
     constexpr int nice_scale_factor = 4;
     sample *= nice_scale_factor;
-    constexpr double sample_max = std::numeric_limits<i16>::max();
+    constexpr double sample_max = NumericLimits<i16>::max();
     double percentage = sample / sample_max;
     double portion_of_half_height = percentage * ((frame_inner_rect().height() - 1) / 2.0);
     double y = (frame_inner_rect().height() / 2.0) + portion_of_half_height;
@@ -56,9 +56,9 @@ void WaveWidget::paint_event(GUI::PaintEvent& event)
     painter.fill_rect(frame_inner_rect(), Color::Black);
     painter.translate(frame_thickness(), frame_thickness());
 
-    Color left_wave_color = left_wave_colors[m_audio_engine.wave()];
-    Color right_wave_color = right_wave_colors[m_audio_engine.wave()];
-    auto buffer = m_audio_engine.buffer();
+    Color left_wave_color = left_wave_colors[m_track_manager.current_track().wave()];
+    Color right_wave_color = right_wave_colors[m_track_manager.current_track().wave()];
+    auto buffer = m_track_manager.buffer();
     double width_scale = static_cast<double>(frame_inner_rect().width()) / buffer.size();
 
     int prev_x = 0;
@@ -71,12 +71,12 @@ void WaveWidget::paint_event(GUI::PaintEvent& event)
         int y_left = sample_to_y(buffer[x].left);
         int y_right = sample_to_y(buffer[x].right);
 
-        Gfx::Point point1_left(prev_x * width_scale, prev_y_left);
-        Gfx::Point point2_left(x * width_scale, y_left);
+        Gfx::IntPoint point1_left(prev_x * width_scale, prev_y_left);
+        Gfx::IntPoint point2_left(x * width_scale, y_left);
         painter.draw_line(point1_left, point2_left, left_wave_color);
 
-        Gfx::Point point1_right(prev_x * width_scale, prev_y_right);
-        Gfx::Point point2_right(x * width_scale, y_right);
+        Gfx::IntPoint point1_right(prev_x * width_scale, prev_y_right);
+        Gfx::IntPoint point2_right(x * width_scale, y_right);
         painter.draw_line(point1_right, point2_right, right_wave_color);
 
         prev_x = x;

@@ -24,22 +24,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGUI/Widget.h>
+#pragma once
 
-class Document;
+#include <LibGUI/Widget.h>
+#include <LibWeb/Forward.h>
+
+namespace Browser {
 
 class InspectorWidget final : public GUI::Widget {
     C_OBJECT(InspectorWidget)
 public:
     virtual ~InspectorWidget();
 
-    void set_document(Document*);
+    void set_document(Web::DOM::Document*);
 
 private:
     InspectorWidget();
 
+    void set_inspected_node(Web::DOM::Node*);
+
     RefPtr<GUI::TreeView> m_dom_tree_view;
+    RefPtr<GUI::TreeView> m_layout_tree_view;
     RefPtr<GUI::TableView> m_style_table_view;
     RefPtr<GUI::TableView> m_computed_style_table_view;
-    RefPtr<Document> m_document;
+    RefPtr<Web::DOM::Document> m_document;
 };
+
+}

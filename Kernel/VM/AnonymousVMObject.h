@@ -26,8 +26,8 @@
 
 #pragma once
 
+#include <Kernel/PhysicalAddress.h>
 #include <Kernel/VM/VMObject.h>
-#include <LibBareMetal/Memory/PhysicalAddress.h>
 
 namespace Kernel {
 
@@ -44,6 +44,8 @@ protected:
     explicit AnonymousVMObject(size_t);
     explicit AnonymousVMObject(const AnonymousVMObject&);
 
+    virtual const char* class_name() const override { return "AnonymousVMObject"; }
+
 private:
     AnonymousVMObject(PhysicalAddress, size_t);
 
@@ -55,3 +57,7 @@ private:
 };
 
 }
+
+AK_BEGIN_TYPE_TRAITS(Kernel::AnonymousVMObject)
+static bool is_type(const Kernel::VMObject& vmobject) { return vmobject.is_anonymous(); }
+AK_END_TYPE_TRAITS()

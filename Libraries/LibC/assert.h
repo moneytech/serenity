@@ -31,11 +31,17 @@
 __BEGIN_DECLS
 
 #ifdef DEBUG
-__attribute__((noreturn)) void __assertion_failed(const char* msg, const char* file, unsigned line, const char* func);
-#    define assert(expr) ((expr) ? (void)0 : __assertion_failed(#    expr, __FILE__, __LINE__, __PRETTY_FUNCTION__))
+__attribute__((noreturn)) void __assertion_failed(const char* msg);
+#    define __stringify_helper(x) #    x
+#    define __stringify(x) __stringify_helper(x)
+#    define assert(expr)                                                           \
+        do {                                                                       \
+            if (__builtin_expect(!(expr), 0))                                      \
+                __assertion_failed(#expr "\n" __FILE__ ":" __stringify(__LINE__)); \
+        } while (0)
 #    define ASSERT_NOT_REACHED() assert(false)
 #else
-#    define assert(expr)
+#    define assert(expr) ((void)0)
 #    define ASSERT_NOT_REACHED() CRASH()
 #endif
 
@@ -45,5 +51,6 @@ __attribute__((noreturn)) void __assertion_failed(const char* msg, const char* f
     } while (0)
 #define ASSERT assert
 #define RELEASE_ASSERT assert
+#define TODO ASSERT_NOT_REACHED
 
 __END_DECLS

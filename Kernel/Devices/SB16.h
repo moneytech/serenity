@@ -28,9 +28,9 @@
 
 #include <Kernel/Devices/CharacterDevice.h>
 #include <Kernel/Interrupts/IRQHandler.h>
+#include <Kernel/PhysicalAddress.h>
 #include <Kernel/VM/PhysicalPage.h>
 #include <Kernel/WaitQueue.h>
-#include <LibBareMetal/Memory/PhysicalAddress.h>
 
 namespace Kernel {
 
@@ -42,17 +42,20 @@ public:
     SB16();
     virtual ~SB16() override;
 
+    static void create();
     static SB16& the();
 
     // ^CharacterDevice
-    virtual bool can_read(const FileDescription&) const override;
-    virtual ssize_t read(FileDescription&, u8*, ssize_t) override;
-    virtual ssize_t write(FileDescription&, const u8*, ssize_t) override;
-    virtual bool can_write(const FileDescription&) const override { return true; }
+    virtual bool can_read(const FileDescription&, size_t) const override;
+    virtual KResultOr<size_t> read(FileDescription&, size_t, UserOrKernelBuffer&, size_t) override;
+    virtual KResultOr<size_t> write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t) override;
+    virtual bool can_write(const FileDescription&, size_t) const override { return true; }
+
+    virtual const char* purpose() const override { return class_name(); }
 
 private:
     // ^IRQHandler
-    virtual void handle_irq(RegisterState&) override;
+    virtual void handle_irq(const RegisterState&) override;
 
     // ^CharacterDevice
     virtual const char* class_name() const override { return "SB16"; }

@@ -45,7 +45,7 @@ void ClientConnection::enqueue(const Buffer& buffer)
 {
     for (;;) {
         const_cast<Buffer&>(buffer).shared_buffer().share_with(server_pid());
-        auto response = send_sync<Messages::AudioServer::EnqueueBuffer>(buffer.shared_buffer_id(), buffer.sample_count());
+        auto response = send_sync<Messages::AudioServer::EnqueueBuffer>(buffer.shbuf_id(), buffer.sample_count());
         if (response->success())
             break;
         sleep(1);
@@ -55,7 +55,7 @@ void ClientConnection::enqueue(const Buffer& buffer)
 bool ClientConnection::try_enqueue(const Buffer& buffer)
 {
     const_cast<Buffer&>(buffer).shared_buffer().share_with(server_pid());
-    auto response = send_sync<Messages::AudioServer::EnqueueBuffer>(buffer.shared_buffer_id(), buffer.sample_count());
+    auto response = send_sync<Messages::AudioServer::EnqueueBuffer>(buffer.shbuf_id(), buffer.sample_count());
     return response->success();
 }
 
@@ -114,6 +114,12 @@ void ClientConnection::handle(const Messages::AudioClient::MutedStateChanged& me
 {
     if (on_muted_state_change)
         on_muted_state_change(message.muted());
+}
+
+void ClientConnection::handle(const Messages::AudioClient::MainMixVolumeChanged& message)
+{
+    if (on_main_mix_volume_change)
+        on_main_mix_volume_change(message.volume());
 }
 
 }

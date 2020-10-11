@@ -24,11 +24,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/StringView.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/FileSystem/InodeFile.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Process.h>
+#include <Kernel/VM/PrivateInodeVMObject.h>
+#include <Kernel/VM/SharedInodeVMObject.h>
 
 namespace Kernel {
 
@@ -41,29 +44,39 @@ InodeFile::~InodeFile()
 {
 }
 
-ssize_t InodeFile::read(FileDescription& description, u8* buffer, ssize_t count)
+KResultOr<size_t> InodeFile::read(FileDescription& description, size_t offset, UserOrKernelBuffer& buffer, size_t count)
 {
-    ssize_t nread = m_inode->read_bytes(description.offset(), count, buffer, &description);
+    ssize_t nread = m_inode->read_bytes(offset, count, buffer, &description);
     if (nread > 0)
-        Thread::current->did_file_read(nread);
+        Thread::current()->did_file_read(nread);
+    if (nread < 0)
+        return KResult(nread);
     return nread;
 }
 
-ssize_t InodeFile::write(FileDescription& description, const u8* data, ssize_t count)
+KResultOr<size_t> InodeFile::write(FileDescription& description, size_t offset, const UserOrKernelBuffer& data, size_t count)
 {
-    ssize_t nwritten = m_inode->write_bytes(description.offset(), count, data, &description);
+    ssize_t nwritten = m_inode->write_bytes(offset, count, data, &description);
     if (nwritten > 0) {
         m_inode->set_mtime(kgettimeofday().tv_sec);
-        Thread::current->did_file_write(nwritten);
+        Thread::current()->did_file_write(nwritten);
     }
+    if (nwritten < 0)
+        return KResult(nwritten);
     return nwritten;
 }
 
-KResultOr<Region*> InodeFile::mmap(Process& process, FileDescription& description, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot)
+KResultOr<Region*> InodeFile::mmap(Process& process, FileDescription& description, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot, bool shared)
 {
-    ASSERT(offset == 0);
     // FIXME: If PROT_EXEC, check that the underlying file system isn't mounted noexec.
-    auto* region = process.allocate_file_backed_region(preferred_vaddr, size, inode(), description.absolute_path(), prot);
+    RefPtr<InodeVMObject> vmobject;
+    if (shared)
+        vmobject = SharedInodeVMObject::create_with_inode(inode());
+    else
+        vmobject = PrivateInodeVMObject::create_with_inode(inode());
+    if (!vmobject)
+        return KResult(-ENOMEM);
+    auto* region = process.allocate_region_with_vmobject(preferred_vaddr, size, *vmobject, offset, description.absolute_path(), prot);
     if (!region)
         return KResult(-ENOMEM);
     return region;
@@ -87,14 +100,18 @@ KResult InodeFile::truncate(u64 size)
     return KSuccess;
 }
 
-KResult InodeFile::chown(uid_t uid, gid_t gid)
+KResult InodeFile::chown(FileDescription& description, uid_t uid, gid_t gid)
 {
-    return VFS::the().chown(*m_inode, uid, gid);
+    ASSERT(description.inode() == m_inode);
+    ASSERT(description.custody());
+    return VFS::the().chown(*description.custody(), uid, gid);
 }
 
-KResult InodeFile::chmod(mode_t mode)
+KResult InodeFile::chmod(FileDescription& description, mode_t mode)
 {
-    return VFS::the().chmod(*m_inode, mode);
+    ASSERT(description.inode() == m_inode);
+    ASSERT(description.custody());
+    return VFS::the().chmod(*description.custody(), mode);
 }
 
 }

@@ -29,7 +29,7 @@
 #include <bits/stdint.h>
 
 #ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
+#    define PAGE_SIZE 4096
 #endif
 
 #define PATH_MAX 4096
@@ -52,8 +52,12 @@
 #define LONG_MAX 2147483647L
 #define LONG_MIN (-LONG_MAX - 1L)
 
+#define ULONG_MAX 4294967295UL
+
 #define LONG_LONG_MAX 9223372036854775807LL
 #define LONG_LONG_MIN (-LONG_LONG_MAX - 1LL)
+
+#define ULONG_LONG_MAX 18446744073709551615ULL
 
 #define CHAR_MIN SCHAR_MIN
 #define CHAR_MAX SCHAR_MAX
@@ -63,3 +67,5 @@
 #define ARG_MAX 65536
 
 #define PTHREAD_STACK_MIN 65536
+
+#define SSIZE_MAX 2147483647

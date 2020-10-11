@@ -42,11 +42,15 @@ void StackWidget::set_active_widget(Widget* widget)
     if (widget == m_active_widget)
         return;
 
+    bool had_focus = is_focused() || (m_active_widget && m_active_widget->is_focused());
+
     if (m_active_widget)
         m_active_widget->set_visible(false);
     m_active_widget = widget;
     if (m_active_widget) {
         m_active_widget->set_relative_rect(rect());
+        if (had_focus)
+            m_active_widget->set_focus(true);
         m_active_widget->set_visible(true);
     }
     if (on_active_widget_change)
@@ -62,9 +66,9 @@ void StackWidget::resize_event(ResizeEvent& event)
 
 void StackWidget::child_event(Core::ChildEvent& event)
 {
-    if (!event.child() || !Core::is<Widget>(*event.child()))
+    if (!event.child() || !is<Widget>(*event.child()))
         return Widget::child_event(event);
-    auto& child = Core::to<Widget>(*event.child());
+    auto& child = downcast<Widget>(*event.child());
     if (event.type() == Event::ChildAdded) {
         if (!m_active_widget)
             set_active_widget(&child);

@@ -27,7 +27,9 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/Format.h>
 #include <AK/Forward.h>
+#include <AK/StringView.h>
 #include <stdarg.h>
 
 namespace AK {
@@ -37,17 +39,25 @@ public:
     using OutputType = String;
 
     explicit StringBuilder(size_t initial_capacity = 16);
-    ~StringBuilder() {}
+    ~StringBuilder() { }
 
     void append(const StringView&);
+    void append(const Utf32View&);
     void append(char);
+    void append_code_point(u32);
     void append(const char*, size_t);
     void appendf(const char*, ...);
     void appendvf(const char*, va_list);
 
-    String build();
-    String to_string();
-    ByteBuffer to_byte_buffer();
+    template<typename... Parameters>
+    void appendff(StringView fmtstr, const Parameters&... parameters)
+    {
+        vformat(*this, fmtstr, VariadicFormatParams { parameters... });
+    }
+
+    String build() const;
+    String to_string() const;
+    ByteBuffer to_byte_buffer() const;
 
     StringView string_view() const;
     void clear();
@@ -55,6 +65,19 @@ public:
     size_t length() const { return m_length; }
     bool is_empty() const { return m_length == 0; }
     void trim(size_t count) { m_length -= count; }
+
+    template<class SeparatorType, class CollectionType>
+    void join(const SeparatorType& separator, const CollectionType& collection)
+    {
+        bool first = true;
+        for (auto& item : collection) {
+            if (first)
+                first = false;
+            else
+                append(separator);
+            append(item);
+        }
+    }
 
 private:
     void will_append(size_t);

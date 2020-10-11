@@ -26,6 +26,10 @@
 
 #pragma once
 
+#ifndef __serenity__
+#    include <new>
+#endif
+
 #ifdef KERNEL
 #    define AK_MAKE_ETERNAL                                               \
     public:                                                               \
@@ -38,8 +42,6 @@
 
 #if defined(KERNEL)
 #    include <Kernel/Heap/kmalloc.h>
-#elif defined(BOOTSTRAPPER)
-#    include <Bootstrapper/Memory/malloc.h>
 #else
 #    include <stdlib.h>
 

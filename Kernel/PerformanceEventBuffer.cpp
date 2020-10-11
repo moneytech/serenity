@@ -25,19 +25,19 @@
  */
 
 #include <AK/JsonArraySerializer.h>
-#include <AK/JsonObjectSerializer.h>
 #include <AK/JsonObject.h>
+#include <AK/JsonObjectSerializer.h>
 #include <Kernel/KBufferBuilder.h>
 #include <Kernel/PerformanceEventBuffer.h>
 
 namespace Kernel {
 
 PerformanceEventBuffer::PerformanceEventBuffer()
-    : m_buffer(KBuffer::create_with_size(4 * MB))
+    : m_buffer(KBuffer::create_with_size(4 * MiB))
 {
 }
 
-KResult PerformanceEventBuffer::append(int type, uintptr_t arg1, uintptr_t arg2)
+KResult PerformanceEventBuffer::append(int type, FlatPtr arg1, FlatPtr arg2)
 {
     if (count() >= capacity())
         return KResult(-ENOBUFS);
@@ -63,17 +63,18 @@ KResult PerformanceEventBuffer::append(int type, uintptr_t arg1, uintptr_t arg2)
         return KResult(-EINVAL);
     }
 
-    uintptr_t ebp;
+    FlatPtr ebp;
     asm volatile("movl %%ebp, %%eax"
                  : "=a"(ebp));
-    //copy_from_user(&ebp, (uintptr_t*)current->get_register_dump_from_stack().ebp);
-    Vector<uintptr_t> backtrace;
+    auto current_thread = Thread::current();
+    auto eip = current_thread->get_register_dump_from_stack().eip;
+    Vector<FlatPtr> backtrace;
     {
         SmapDisabler disabler;
-        backtrace = Thread::current->raw_backtrace(ebp);
+        backtrace = current_thread->raw_backtrace(ebp, eip);
     }
-    event.stack_size = min(sizeof(event.stack) / sizeof(uintptr_t), static_cast<size_t>(backtrace.size()));
-    memcpy(event.stack, backtrace.data(), event.stack_size * sizeof(uintptr_t));
+    event.stack_size = min(sizeof(event.stack) / sizeof(FlatPtr), static_cast<size_t>(backtrace.size()));
+    memcpy(event.stack, backtrace.data(), event.stack_size * sizeof(FlatPtr));
 
 #ifdef VERY_DEBUG
     for (size_t i = 0; i < event.stack_size; ++i)
@@ -92,36 +93,36 @@ PerformanceEvent& PerformanceEventBuffer::at(size_t index)
     return events[index];
 }
 
-KBuffer PerformanceEventBuffer::to_json(pid_t pid, const String& executable_path) const
+KBuffer PerformanceEventBuffer::to_json(ProcessID pid, const String& executable_path) const
 {
     KBufferBuilder builder;
 
     JsonObjectSerializer object(builder);
-    object.add("pid", pid);
+    object.add("pid", pid.value());
     object.add("executable", executable_path);
 
     auto array = object.add_array("events");
     for (size_t i = 0; i < m_count; ++i) {
         auto& event = at(i);
-        auto object = array.add_object();
+        auto event_object = array.add_object();
         switch (event.type) {
         case PERF_EVENT_MALLOC:
-            object.add("type", "malloc");
-            object.add("ptr", static_cast<u64>(event.data.malloc.ptr));
-            object.add("size", static_cast<u64>(event.data.malloc.size));
+            event_object.add("type", "malloc");
+            event_object.add("ptr", static_cast<u64>(event.data.malloc.ptr));
+            event_object.add("size", static_cast<u64>(event.data.malloc.size));
             break;
         case PERF_EVENT_FREE:
-            object.add("type", "free");
-            object.add("ptr", static_cast<u64>(event.data.free.ptr));
+            event_object.add("type", "free");
+            event_object.add("ptr", static_cast<u64>(event.data.free.ptr));
             break;
         }
-        object.add("timestamp", event.timestamp);
-        auto stack_array = object.add_array("stack");
+        event_object.add("timestamp", event.timestamp);
+        auto stack_array = event_object.add_array("stack");
         for (size_t j = 0; j < event.stack_size; ++j) {
             stack_array.add(event.stack[j]);
         }
         stack_array.finish();
-        object.finish();
+        event_object.finish();
     }
     array.finish();
     object.finish();

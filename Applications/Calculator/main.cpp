@@ -41,7 +41,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer rpath accept", nullptr) < 0) {
         perror("pledge");
@@ -58,30 +58,27 @@ int main(int argc, char** argv)
     auto window = GUI::Window::construct();
     window->set_title("Calculator");
     window->set_resizable(false);
-    window->set_rect({ 300, 200, 254, 213 });
+    window->resize(254, 213);
 
-    auto calc_widget = CalculatorWidget::construct();
-    window->set_main_widget(calc_widget);
+    window->set_main_widget<CalculatorWidget>();
 
     window->show();
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-calculator.png"));
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
-    auto app_menu = GUI::Menu::construct("Calculator");
-    app_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
+    auto& app_menu = menubar->add_menu("Calculator");
+    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+        GUI::Application::the()->quit();
         return;
     }));
-    menubar->add_menu(move(app_menu));
 
-    auto help_menu = GUI::Menu::construct("Help");
-    help_menu->add_action(GUI::Action::create("About", [&](const GUI::Action&) {
+    auto& help_menu = menubar->add_menu("Help");
+    help_menu.add_action(GUI::Action::create("About", [&](const GUI::Action&) {
         GUI::AboutDialog::show("Calculator", Gfx::Bitmap::load_from_file("/res/icons/16x16/app-calculator.png"), window);
     }));
-    menubar->add_menu(move(help_menu));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
-    return app.exec();
+    return app->exec();
 }

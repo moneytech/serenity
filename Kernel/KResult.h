@@ -35,9 +35,10 @@ enum KSuccessTag {
     KSuccess
 };
 
-class KResult {
+class [[nodiscard]] KResult
+{
 public:
-    explicit KResult(int negative_e)
+    ALWAYS_INLINE explicit KResult(int negative_e)
         : m_error(negative_e)
     {
         ASSERT(negative_e <= 0);
@@ -47,21 +48,22 @@ public:
     {
     }
     operator int() const { return m_error; }
-    int error() const { return m_error; }
+    [[nodiscard]] int error() const { return m_error; }
 
-    bool is_success() const { return m_error == ESUCCESS; }
-    bool is_error() const { return !is_success(); }
+    [[nodiscard]] bool is_success() const { return m_error == 0; }
+    [[nodiscard]] bool is_error() const { return !is_success(); }
 
 private:
     template<typename T>
     friend class KResultOr;
-    KResult() {}
+    KResult() { }
 
     int m_error { 0 };
 };
 
 template<typename T>
-class alignas(T) KResultOr {
+class alignas(T) [[nodiscard]] KResultOr
+{
 public:
     KResultOr(KResult error)
         : m_error(error)
@@ -69,25 +71,40 @@ public:
     {
     }
 
-    KResultOr(T&& value)
+    // FIXME: clang-format gets confused about T. Why?
+    // clang-format off
+    ALWAYS_INLINE KResultOr(T&& value)
+    // clang-format on
     {
         new (&m_storage) T(move(value));
+        m_have_storage = true;
     }
 
     template<typename U>
-    KResultOr(U&& value)
+    // FIXME: clang-format gets confused about U. Why?
+    // clang-format off
+    ALWAYS_INLINE KResultOr(U&& value)
+    // clang-format on
     {
         new (&m_storage) T(move(value));
+        m_have_storage = true;
     }
 
+    // FIXME: clang-format gets confused about KResultOr. Why?
+    // clang-format off
     KResultOr(KResultOr&& other)
+    // clang-format on
     {
         m_is_error = other.m_is_error;
         if (m_is_error)
             m_error = other.m_error;
         else {
-            new (&m_storage) T(move(other.value()));
-            other.value().~T();
+            if (other.m_have_storage) {
+                new (&m_storage) T(move(other.value()));
+                m_have_storage = true;
+                other.value().~T();
+                other.m_have_storage = false;
+            }
         }
         other.m_is_error = true;
         other.m_error = KSuccess;
@@ -95,14 +112,20 @@ public:
 
     KResultOr& operator=(KResultOr&& other)
     {
-        if (!m_is_error)
+        if (!m_is_error && m_have_storage) {
             value().~T();
+            m_have_storage = false;
+        }
         m_is_error = other.m_is_error;
         if (m_is_error)
             m_error = other.m_error;
         else {
-            new (&m_storage) T(move(other.value()));
-            other.value().~T();
+            if (other.m_have_storage) {
+                new (&m_storage) T(move(other.value()));
+                m_have_storage = true;
+                other.value().~T();
+                other.m_have_storage = false;
+            }
         }
         other.m_is_error = true;
         other.m_error = KSuccess;
@@ -111,33 +134,39 @@ public:
 
     ~KResultOr()
     {
-        if (!m_is_error)
+        if (!m_is_error && m_have_storage)
             value().~T();
     }
 
-    bool is_error() const { return m_is_error; }
-    KResult error() const
+    [[nodiscard]] bool is_error() const { return m_is_error; }
+
+    ALWAYS_INLINE KResult error() const
     {
         ASSERT(m_is_error);
         return m_error;
     }
+
     KResult result() const { return m_is_error ? KSuccess : m_error; }
-    T& value()
-    {
-        ASSERT(!m_is_error);
-        return *reinterpret_cast<T*>(&m_storage);
-    }
-    const T& value() const
+
+    ALWAYS_INLINE T& value()
     {
         ASSERT(!m_is_error);
         return *reinterpret_cast<T*>(&m_storage);
     }
 
-    T release_value()
+    ALWAYS_INLINE const T& value() const
     {
         ASSERT(!m_is_error);
+        return *reinterpret_cast<T*>(&m_storage);
+    }
+
+    ALWAYS_INLINE T release_value()
+    {
+        ASSERT(!m_is_error);
+        ASSERT(m_have_storage);
         T released_value = *reinterpret_cast<T*>(&m_storage);
         value().~T();
+        m_have_storage = false;
         return released_value;
     }
 
@@ -145,6 +174,7 @@ private:
     alignas(T) char m_storage[sizeof(T)];
     KResult m_error;
     bool m_is_error { false };
+    bool m_have_storage { false };
 };
 
 }

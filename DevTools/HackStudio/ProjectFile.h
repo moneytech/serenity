@@ -26,11 +26,13 @@
 
 #pragma once
 
+#include "CodeDocument.h"
 #include <AK/ByteBuffer.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/RefCounted.h>
 #include <AK/String.h>
-#include <LibGUI/TextDocument.h>
+
+namespace HackStudio {
 
 class ProjectFile : public RefCounted<ProjectFile> {
 public:
@@ -47,5 +49,7 @@ private:
     explicit ProjectFile(const String& name);
 
     String m_name;
-    mutable RefPtr<GUI::TextDocument> m_document;
+    mutable RefPtr<CodeDocument> m_document;
 };
+
+}

@@ -27,9 +27,10 @@
 #pragma once
 
 #include <AK/String.h>
+#include <AK/StringView.h>
 
 #ifndef BUILDING_SERENITY_TOOLCHAIN
-#include <cxxabi.h>
+#    include <cxxabi.h>
 #endif
 
 namespace AK {
@@ -40,7 +41,7 @@ inline String demangle(const StringView& name)
     return name;
 #else
     int status = 0;
-    auto* demangled_name = abi::__cxa_demangle(String(name).characters(), nullptr, nullptr, &status);
+    auto* demangled_name = abi::__cxa_demangle(name.to_string().characters(), nullptr, nullptr, &status);
     auto string = String(status == 0 ? demangled_name : name);
     if (status == 0)
         kfree(demangled_name);

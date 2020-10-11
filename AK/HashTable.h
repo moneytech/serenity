@@ -34,6 +34,11 @@
 
 namespace AK {
 
+enum class HashSetResult {
+    InsertedNewEntry,
+    ReplacedExistingEntry
+};
+
 template<typename T, typename>
 class HashTable;
 
@@ -79,7 +84,7 @@ public:
 private:
     friend HashTableType;
 
-    explicit HashTableIterator(HashTableType& table, bool is_end, BucketIteratorType bucket_iterator = BucketIteratorType::universal_end(), size_t bucket_index = 0)
+    explicit HashTableIterator(HashTableType& table, bool is_end, BucketIteratorType bucket_iterator = {}, size_t bucket_index = 0)
         : m_table(table)
         , m_bucket_index(bucket_index)
         , m_is_end(is_end)
@@ -87,7 +92,7 @@ private:
     {
         ASSERT(!table.m_clearing);
         ASSERT(!table.m_rehashing);
-        if (!is_end && !m_table.is_empty() && !(m_bucket_iterator != BucketIteratorType::universal_end())) {
+        if (!is_end && !m_table.is_empty() && m_bucket_iterator.is_end()) {
             m_bucket_iterator = m_table.bucket(0).begin();
             if (m_bucket_iterator.is_end())
                 skip_to_next();
@@ -106,7 +111,12 @@ private:
     using Bucket = SinglyLinkedList<T>;
 
 public:
-    HashTable() {}
+    HashTable() { }
+    HashTable(size_t capacity)
+        : m_buckets(new Bucket[capacity])
+        , m_capacity(capacity)
+    {
+    }
     HashTable(const HashTable& other)
     {
         ensure_capacity(other.size());
@@ -157,8 +167,17 @@ public:
         rehash(capacity);
     }
 
-    void set(const T&);
-    void set(T&&);
+    HashSetResult set(const T&);
+    HashSetResult set(T&&);
+
+    template<typename U, size_t N>
+    void set_from(U (&from_array)[N])
+    {
+        for (size_t i = 0; i < N; ++i) {
+            set(from_array[i]);
+        }
+    }
+
     bool contains(const T&) const;
     void clear();
 
@@ -208,11 +227,14 @@ public:
         return find(TraitsForT::hash(value), [&](auto& other) { return TraitsForT::equals(value, other); });
     }
 
-    void remove(const T& value)
+    bool remove(const T& value)
     {
         auto it = find(value);
-        if (it != end())
+        if (it != end()) {
             remove(it);
+            return true;
+        }
+        return false;
     }
 
     void remove(Iterator);
@@ -251,7 +273,7 @@ private:
 };
 
 template<typename T, typename TraitsForT>
-void HashTable<T, TraitsForT>::set(T&& value)
+HashSetResult HashTable<T, TraitsForT>::set(T&& value)
 {
     if (!m_capacity)
         rehash(1);
@@ -259,7 +281,7 @@ void HashTable<T, TraitsForT>::set(T&& value)
     for (auto& e : bucket) {
         if (TraitsForT::equals(e, value)) {
             e = move(value);
-            return;
+            return HashSetResult::ReplacedExistingEntry;
         }
     }
     if (size() >= capacity()) {
@@ -269,10 +291,11 @@ void HashTable<T, TraitsForT>::set(T&& value)
         bucket.append(move(value));
     }
     m_size++;
+    return HashSetResult::InsertedNewEntry;
 }
 
 template<typename T, typename TraitsForT>
-void HashTable<T, TraitsForT>::set(const T& value)
+HashSetResult HashTable<T, TraitsForT>::set(const T& value)
 {
     if (!m_capacity)
         rehash(1);
@@ -280,7 +303,7 @@ void HashTable<T, TraitsForT>::set(const T& value)
     for (auto& e : bucket) {
         if (TraitsForT::equals(e, value)) {
             e = value;
-            return;
+            return HashSetResult::ReplacedExistingEntry;
         }
     }
     if (size() >= capacity()) {
@@ -290,6 +313,7 @@ void HashTable<T, TraitsForT>::set(const T& value)
         bucket.append(value);
     }
     m_size++;
+    return HashSetResult::InsertedNewEntry;
 }
 
 template<typename T, typename TraitsForT>

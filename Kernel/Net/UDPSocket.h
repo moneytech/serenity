@@ -36,15 +36,15 @@ public:
     virtual ~UDPSocket() override;
 
     static SocketHandle<UDPSocket> from_port(u16);
-    static void for_each(Function<void(UDPSocket&)>);
+    static void for_each(Function<void(const UDPSocket&)>);
 
 private:
     explicit UDPSocket(int protocol);
     virtual const char* class_name() const override { return "UDPSocket"; }
     static Lockable<HashMap<u16, UDPSocket*>>& sockets_by_port();
 
-    virtual int protocol_receive(const KBuffer&, void* buffer, size_t buffer_size, int flags) override;
-    virtual int protocol_send(const void*, size_t) override;
+    virtual KResultOr<size_t> protocol_receive(const KBuffer&, UserOrKernelBuffer& buffer, size_t buffer_size, int flags) override;
+    virtual KResultOr<size_t> protocol_send(const UserOrKernelBuffer&, size_t) override;
     virtual KResult protocol_connect(FileDescription&, ShouldBlock) override;
     virtual int protocol_allocate_local_port() override;
     virtual KResult protocol_bind() override;

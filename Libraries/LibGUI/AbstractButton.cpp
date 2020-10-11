@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/JsonObject.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/AbstractButton.h>
 #include <LibGUI/Painter.h>
@@ -34,10 +35,18 @@ namespace GUI {
 AbstractButton::AbstractButton(const StringView& text)
     : m_text(text)
 {
+    set_background_role(Gfx::ColorRole::Button);
+    set_foreground_role(Gfx::ColorRole::ButtonText);
+
     m_auto_repeat_timer = add<Core::Timer>();
     m_auto_repeat_timer->on_timeout = [this] {
         click();
     };
+
+    REGISTER_STRING_PROPERTY("text", text, set_text);
+    REGISTER_BOOL_PROPERTY("checked", is_checked, set_checked);
+    REGISTER_BOOL_PROPERTY("checkable", is_checkable, set_checkable);
+    REGISTER_BOOL_PROPERTY("exclusive", is_exclusive, set_exclusive);
 }
 
 AbstractButton::~AbstractButton()
@@ -89,18 +98,16 @@ void AbstractButton::mousemove_event(MouseEvent& event)
     bool is_over = rect().contains(event.position());
     m_hovered = is_over;
     if (event.buttons() & MouseButton::Left) {
-        if (is_enabled()) {
-            bool being_pressed = is_over;
-            if (being_pressed != m_being_pressed) {
-                m_being_pressed = being_pressed;
-                if (m_auto_repeat_interval) {
-                    if (!m_being_pressed)
-                        m_auto_repeat_timer->stop();
-                    else
-                        m_auto_repeat_timer->start(m_auto_repeat_interval);
-                }
-                update();
+        bool being_pressed = is_over;
+        if (being_pressed != m_being_pressed) {
+            m_being_pressed = being_pressed;
+            if (m_auto_repeat_interval) {
+                if (!m_being_pressed)
+                    m_auto_repeat_timer->stop();
+                else
+                    m_auto_repeat_timer->start(m_auto_repeat_interval);
             }
+            update();
         }
     }
     Widget::mousemove_event(event);
@@ -108,18 +115,13 @@ void AbstractButton::mousemove_event(MouseEvent& event)
 
 void AbstractButton::mousedown_event(MouseEvent& event)
 {
-#ifdef GABSTRACTBUTTON_DEBUG
-    dbgprintf("AbstractButton::mouse_down_event: x=%d, y=%d, button=%u\n", event.x(), event.y(), (unsigned)event.button());
-#endif
     if (event.button() == MouseButton::Left) {
-        if (is_enabled()) {
-            m_being_pressed = true;
-            update();
+        m_being_pressed = true;
+        update();
 
-            if (m_auto_repeat_interval) {
-                click();
-                m_auto_repeat_timer->start(m_auto_repeat_interval);
-            }
+        if (m_auto_repeat_interval) {
+            click();
+            m_auto_repeat_timer->start(m_auto_repeat_interval);
         }
     }
     Widget::mousedown_event(event);
@@ -127,19 +129,14 @@ void AbstractButton::mousedown_event(MouseEvent& event)
 
 void AbstractButton::mouseup_event(MouseEvent& event)
 {
-#ifdef GABSTRACTBUTTON_DEBUG
-    dbgprintf("AbstractButton::mouse_up_event: x=%d, y=%d, button=%u\n", event.x(), event.y(), (unsigned)event.button());
-#endif
     if (event.button() == MouseButton::Left) {
         bool was_auto_repeating = m_auto_repeat_timer->is_active();
         m_auto_repeat_timer->stop();
-        if (is_enabled()) {
-            bool was_being_pressed = m_being_pressed;
-            m_being_pressed = false;
-            update();
-            if (was_being_pressed && !was_auto_repeating)
-                click();
-        }
+        bool was_being_pressed = m_being_pressed;
+        m_being_pressed = false;
+        update();
+        if (was_being_pressed && !was_auto_repeating)
+            click(event.modifiers());
     }
     Widget::mouseup_event(event);
 }
@@ -159,14 +156,14 @@ void AbstractButton::leave_event(Core::Event&)
 void AbstractButton::keydown_event(KeyEvent& event)
 {
     if (event.key() == KeyCode::Key_Return) {
-        click();
+        click(event.modifiers());
         event.accept();
         return;
     }
     Widget::keydown_event(event);
 }
 
-void AbstractButton::paint_text(Painter& painter, const Gfx::Rect& rect, const Gfx::Font& font, Gfx::TextAlignment text_alignment)
+void AbstractButton::paint_text(Painter& painter, const Gfx::IntRect& rect, const Gfx::Font& font, Gfx::TextAlignment text_alignment)
 {
     auto clipped_rect = rect.intersected(this->rect());
 
@@ -178,7 +175,7 @@ void AbstractButton::paint_text(Painter& painter, const Gfx::Rect& rect, const G
 
     if (text().is_empty())
         return;
-    painter.draw_text(clipped_rect, text(), font, text_alignment, palette().button_text(), Gfx::TextElision::Right);
+    painter.draw_text(clipped_rect, text(), font, text_alignment, palette().color(foreground_role()), Gfx::TextElision::Right);
     if (is_focused())
         painter.draw_rect(clipped_rect.inflated(6, 4), palette().focus_outline());
 }

@@ -30,42 +30,65 @@
 
 namespace GUI {
 
-class SortingProxyModel final : public Model {
+class SortingProxyModel
+    : public Model
+    , private ModelClient {
 public:
-    static NonnullRefPtr<SortingProxyModel> create(NonnullRefPtr<Model>&& model) { return adopt(*new SortingProxyModel(move(model))); }
+    static NonnullRefPtr<SortingProxyModel> create(NonnullRefPtr<Model> source) { return adopt(*new SortingProxyModel(move(source))); }
     virtual ~SortingProxyModel() override;
 
     virtual int row_count(const ModelIndex& = ModelIndex()) const override;
     virtual int column_count(const ModelIndex& = ModelIndex()) const override;
-    virtual String row_name(int) const override;
     virtual String column_name(int) const override;
-    virtual ColumnMetadata column_metadata(int) const override;
-    virtual Variant data(const ModelIndex&, Role = Role::Display) const override;
+    virtual Variant data(const ModelIndex&, ModelRole = ModelRole::Display) const override;
     virtual void update() override;
     virtual StringView drag_data_type() const override;
+    virtual ModelIndex parent_index(const ModelIndex&) const override;
+    virtual ModelIndex index(int row, int column, const ModelIndex& parent) const override;
+    virtual bool is_editable(const ModelIndex&) const override;
+    virtual void set_data(const ModelIndex&, const Variant&) override;
 
-    virtual int key_column() const override { return m_key_column; }
-    virtual SortOrder sort_order() const override { return m_sort_order; }
-    virtual void set_key_column_and_sort_order(int, SortOrder) override;
+    virtual bool is_column_sortable(int column_index) const override;
 
-    ModelIndex map_to_target(const ModelIndex&) const;
+    virtual bool less_than(const ModelIndex&, const ModelIndex&) const;
+
+    ModelIndex map_to_source(const ModelIndex&) const;
+    ModelIndex map_to_proxy(const ModelIndex&) const;
+
+    ModelRole sort_role() const { return m_sort_role; }
+    void set_sort_role(ModelRole role) { m_sort_role = role; }
+
+    virtual void sort(int column, SortOrder) override;
 
 private:
-    explicit SortingProxyModel(NonnullRefPtr<Model>&&);
+    explicit SortingProxyModel(NonnullRefPtr<Model> source);
 
-    Model& target() { return *m_target; }
-    const Model& target() const { return *m_target; }
+    // NOTE: The internal_data() of indexes points to the corresponding Mapping object for that index.
+    struct Mapping {
+        Vector<int> source_rows;
+        Vector<int> proxy_rows;
+        ModelIndex source_parent;
+    };
 
-    void resort();
+    using InternalMapIterator = HashMap<ModelIndex, NonnullOwnPtr<Mapping>>::IteratorType;
 
-    void set_sorting_case_sensitive(bool b) { m_sorting_case_sensitive = b; }
-    bool is_sorting_case_sensitive() { return m_sorting_case_sensitive; }
+    void sort_mapping(Mapping&, int column, SortOrder);
 
-    NonnullRefPtr<Model> m_target;
-    Vector<int> m_row_mappings;
-    int m_key_column { -1 };
-    SortOrder m_sort_order { SortOrder::Ascending };
-    bool m_sorting_case_sensitive { false };
+    // ^ModelClient
+    virtual void model_did_update(unsigned) override;
+
+    Model& source() { return *m_source; }
+    const Model& source() const { return *m_source; }
+
+    void invalidate(unsigned flags = Model::UpdateFlag::DontInvalidateIndexes);
+    InternalMapIterator build_mapping(const ModelIndex& proxy_index);
+
+    NonnullRefPtr<Model> m_source;
+
+    HashMap<ModelIndex, NonnullOwnPtr<Mapping>> m_mappings;
+    ModelRole m_sort_role { ModelRole::Sort };
+    int m_last_key_column { -1 };
+    SortOrder m_last_sort_order { SortOrder::Ascending };
 };
 
 }

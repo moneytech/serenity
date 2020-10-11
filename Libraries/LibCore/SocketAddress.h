@@ -29,6 +29,7 @@
 #include <AK/IPv4Address.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -42,7 +43,7 @@ public:
         Local
     };
 
-    SocketAddress() {}
+    SocketAddress() { }
     SocketAddress(const IPv4Address& address)
         : m_type(Type::IPv4)
         , m_ipv4_address(address)
@@ -77,24 +78,25 @@ public:
         case Type::Local:
             return m_local_address;
         default:
-            return "[CSocketAddress]";
+            return "[SocketAddress]";
         }
     }
 
-    sockaddr_un to_sockaddr_un() const
+    Optional<sockaddr_un> to_sockaddr_un() const
     {
         ASSERT(type() == Type::Local);
         sockaddr_un address;
         address.sun_family = AF_LOCAL;
-        RELEASE_ASSERT(m_local_address.length() < (int)sizeof(address.sun_path));
-        strcpy(address.sun_path, m_local_address.characters());
+        bool fits = m_local_address.copy_characters_to_buffer(address.sun_path, sizeof(address.sun_path));
+        if (!fits)
+            return {};
         return address;
     }
 
     sockaddr_in to_sockaddr_in() const
     {
         ASSERT(type() == Type::IPv4);
-        sockaddr_in address;
+        sockaddr_in address {};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = m_ipv4_address.to_in_addr_t();
         address.sin_port = htons(m_port);

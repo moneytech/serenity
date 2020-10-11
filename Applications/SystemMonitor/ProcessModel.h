@@ -27,6 +27,7 @@
 #pragma once
 
 #include <AK/HashMap.h>
+#include <AK/NonnullOwnPtrVector.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibGUI/Model.h>
@@ -49,12 +50,16 @@ public:
         Icon = 0,
         Name,
         CPU,
+        Processor,
         State,
         Priority,
         EffectivePriority,
         User,
         PID,
         TID,
+        PPID,
+        PGID,
+        SID,
         Virtual,
         Physical,
         DirtyPrivate,
@@ -84,24 +89,39 @@ public:
     virtual int row_count(const GUI::ModelIndex&) const override;
     virtual int column_count(const GUI::ModelIndex&) const override;
     virtual String column_name(int column) const override;
-    virtual ColumnMetadata column_metadata(int column) const override;
-    virtual GUI::Variant data(const GUI::ModelIndex&, Role = Role::Display) const override;
+    virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
     virtual void update() override;
 
-    Function<void(float)> on_new_cpu_data_point;
+    struct CpuInfo {
+        u32 id;
+        float total_cpu_percent { 0.0 };
+
+        CpuInfo(u32 id)
+            : id(id)
+        {
+        }
+    };
+
+    Function<void(const NonnullOwnPtrVector<CpuInfo>&)> on_cpu_info_change;
+
+    const NonnullOwnPtrVector<CpuInfo>& cpus() const { return m_cpus; }
 
 private:
     ProcessModel();
 
     struct ThreadState {
-        int tid;
+        pid_t tid;
         pid_t pid;
+        pid_t ppid;
+        pid_t pgid;
+        pid_t sid;
         unsigned times_scheduled;
         String name;
         String state;
         String user;
         String pledge;
         String veil;
+        u32 cpu;
         u32 priority;
         u32 effective_priority;
         size_t amount_virtual;
@@ -131,6 +151,7 @@ private:
 
     HashMap<uid_t, String> m_usernames;
     HashMap<PidAndTid, NonnullOwnPtr<Thread>> m_threads;
+    NonnullOwnPtrVector<CpuInfo> m_cpus;
     Vector<PidAndTid> m_pids;
     RefPtr<Gfx::Bitmap> m_generic_process_icon;
     RefPtr<Gfx::Bitmap> m_high_priority_icon;

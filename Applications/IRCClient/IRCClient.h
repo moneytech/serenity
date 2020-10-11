@@ -56,11 +56,23 @@ public:
 
     String nickname() const { return m_nickname; }
 
+    String ctcp_version_reply() const { return m_ctcp_version_reply; }
+    String ctcp_userinfo_reply() const { return m_ctcp_userinfo_reply; }
+    String ctcp_finger_reply() const { return m_ctcp_finger_reply; }
+
+    bool show_join_part_messages() const { return m_show_join_part_messages; }
+    bool show_nick_change_messages() const { return m_show_nick_change_messages; }
+
+    bool notify_on_message() const { return m_notify_on_message; }
+    bool notify_on_mention() const { return m_notify_on_mention; }
+
     void join_channel(const String&);
     void part_channel(const String&);
     void change_nick(const String&);
 
-    bool is_nick_prefix(char) const;
+    static bool is_nick_prefix(char);
+    static bool is_channel_prefix(char);
+    String nick_without_prefix(const String& nick);
 
     IRCWindow* current_window() { return aid_get_active_window(); }
     const IRCWindow* current_window() const { return aid_get_active_window(); }
@@ -84,13 +96,13 @@ public:
     const IRCWindow& window_at(int index) const { return *m_windows.at(index); }
     IRCWindow& window_at(int index) { return *m_windows.at(index); }
 
-    int window_index(const IRCWindow& window) const
+    size_t window_index(const IRCWindow& window) const
     {
-        for (int i = 0; i < m_windows.size(); ++i) {
+        for (size_t i = 0; i < m_windows.size(); ++i) {
             if (m_windows[i] == &window)
                 return i;
         }
-        return -1;
+        ASSERT_NOT_REACHED();
     }
 
     void did_part_from_channel(Badge<IRCChannel>, IRCChannel&);
@@ -99,12 +111,25 @@ public:
     void handle_user_input_in_query(const String& query_name, const String&);
     void handle_user_input_in_server(const String&);
 
-    void handle_whois_action(const String&);
+    void handle_list_channels_action();
+    void handle_whois_action(const String& nick);
+    void handle_ctcp_user_action(const String& nick, const String& message);
     void handle_open_query_action(const String&);
     void handle_close_query_action(const String&);
-    void handle_join_action(const String&);
-    void handle_part_action(const String&);
-    void handle_change_nick_action(const String&);
+    void handle_join_action(const String& channel_name);
+    void handle_part_action(const String& channel_name);
+    void handle_cycle_channel_action(const String& channel_name);
+    void handle_change_nick_action(const String& nick);
+    void handle_change_topic_action(const String& channel_name, const String&);
+    void handle_invite_user_action(const String& channel_name, const String& nick);
+    void handle_banlist_action(const String& channel_name);
+    void handle_voice_user_action(const String& channel_name, const String& nick);
+    void handle_devoice_user_action(const String& channel_name, const String& nick);
+    void handle_hop_user_action(const String& channel_name, const String& nick);
+    void handle_dehop_user_action(const String& channel_name, const String& nick);
+    void handle_op_user_action(const String& channel_name, const String& nick);
+    void handle_deop_user_action(const String& channel_name, const String& nick);
+    void handle_kick_user_action(const String& channel_name, const String& nick, const String&);
 
     IRCQuery* query_with_name(const String&);
     IRCQuery& ensure_query(const String& name);
@@ -113,7 +138,7 @@ public:
     void add_server_message(const String&, Color = Color::Black);
 
 private:
-    IRCClient();
+    IRCClient(String server, int port);
 
     struct Message {
         String prefix;
@@ -133,28 +158,50 @@ private:
     void send_pong(const String& server);
     void send_privmsg(const String& target, const String&);
     void send_notice(const String& target, const String&);
+    void send_topic(const String& channel_name, const String&);
+    void send_invite(const String& channel_name, const String& nick);
+    void send_banlist(const String& channel_name);
+    void send_voice_user(const String& channel_name, const String& nick);
+    void send_devoice_user(const String& channel_name, const String& nick);
+    void send_hop_user(const String& channel_name, const String& nick);
+    void send_dehop_user(const String& channel_name, const String& nick);
+    void send_op_user(const String& channel_name, const String& nick);
+    void send_deop_user(const String& channel_name, const String& nick);
+    void send_kick(const String& channel_name, const String& nick, const String&);
+    void send_list();
     void send_whois(const String&);
     void process_line(ByteBuffer&&);
     void handle_join(const Message&);
     void handle_part(const Message&);
+    void handle_quit(const Message&);
     void handle_ping(const Message&);
     void handle_topic(const Message&);
+    void handle_rpl_welcome(const Message&);
     void handle_rpl_topic(const Message&);
     void handle_rpl_whoisuser(const Message&);
     void handle_rpl_whoisserver(const Message&);
     void handle_rpl_whoisoperator(const Message&);
     void handle_rpl_whoisidle(const Message&);
+    void handle_rpl_endofwho(const Message&);
     void handle_rpl_endofwhois(const Message&);
+    void handle_rpl_endofwhowas(const Message&);
+    void handle_rpl_endofmotd(const Message&);
     void handle_rpl_whoischannels(const Message&);
     void handle_rpl_topicwhotime(const Message&);
     void handle_rpl_endofnames(const Message&);
+    void handle_rpl_endofbanlist(const Message&);
     void handle_rpl_namreply(const Message&);
+    void handle_rpl_banlist(const Message&);
+    void handle_err_nosuchnick(const Message&);
+    void handle_err_unknowncommand(const Message&);
+    void handle_err_nicknameinuse(const Message&);
     void handle_privmsg_or_notice(const Message&, PrivmsgOrNotice);
     void handle_nick(const Message&);
     void handle(const Message&);
     void handle_user_command(const String&);
     void handle_ctcp_request(const StringView& peer, const StringView& payload);
     void handle_ctcp_response(const StringView& peer, const StringView& payload);
+    void send_ctcp_request(const StringView& peer, const StringView& payload);
     void send_ctcp_response(const StringView& peer, const StringView& payload);
 
     void on_socket_connected();
@@ -168,6 +215,16 @@ private:
     RefPtr<Core::Notifier> m_notifier;
     HashMap<String, RefPtr<IRCChannel>, CaseInsensitiveStringTraits> m_channels;
     HashMap<String, RefPtr<IRCQuery>, CaseInsensitiveStringTraits> m_queries;
+
+    bool m_show_join_part_messages { 1 };
+    bool m_show_nick_change_messages { 1 };
+
+    bool m_notify_on_message { 1 };
+    bool m_notify_on_mention { 1 };
+
+    String m_ctcp_version_reply;
+    String m_ctcp_userinfo_reply;
+    String m_ctcp_finger_reply;
 
     Vector<IRCWindow*> m_windows;
 

@@ -27,7 +27,7 @@
 #include "SampleWidget.h"
 #include <LibAudio/Buffer.h>
 #include <LibGUI/Painter.h>
-#include <LibM/math.h>
+#include <math.h>
 
 SampleWidget::SampleWidget()
 {
@@ -54,14 +54,14 @@ void SampleWidget::paint_event(GUI::PaintEvent& event)
     if (m_buffer) {
         int samples_per_pixel = m_buffer->sample_count() / frame_inner_rect().width();
         for (int sample_index = 0; sample_index < m_buffer->sample_count() && (x - x_offset) < frame_inner_rect().width(); ++sample_index) {
-            float sample = fabsf(m_buffer->samples()[sample_index].left);
+            float sample = fabsf((float)m_buffer->samples()[sample_index].left);
 
             sample_max = max(sample, sample_max);
             ++count;
 
             if (count >= samples_per_pixel) {
-                Gfx::Point min_point = { x, y_offset + static_cast<int>(-sample_max * frame_inner_rect().height() / 2) };
-                Gfx::Point max_point = { x++, y_offset + static_cast<int>(sample_max * frame_inner_rect().height() / 2) };
+                Gfx::IntPoint min_point = { x, y_offset + static_cast<int>(-sample_max * frame_inner_rect().height() / 2) };
+                Gfx::IntPoint max_point = { x++, y_offset + static_cast<int>(sample_max * frame_inner_rect().height() / 2) };
                 painter.draw_line(min_point, max_point, Color::Green);
 
                 count = 0;

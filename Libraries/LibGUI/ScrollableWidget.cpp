@@ -61,7 +61,11 @@ void ScrollableWidget::mousewheel_event(MouseEvent& event)
         return;
     }
     // FIXME: The wheel delta multiplier should probably come from... somewhere?
-    vertical_scrollbar().set_value(vertical_scrollbar().value() + event.wheel_delta() * 20);
+    if (event.shift()) {
+        horizontal_scrollbar().set_value(horizontal_scrollbar().value() + event.wheel_delta() * 60);
+    } else {
+        vertical_scrollbar().set_value(vertical_scrollbar().value() + event.wheel_delta() * 20);
+    }
 }
 
 void ScrollableWidget::custom_layout()
@@ -84,7 +88,7 @@ void ScrollableWidget::custom_layout()
 
     m_corner_widget->set_visible(m_vertical_scrollbar->is_visible() && m_horizontal_scrollbar->is_visible());
     if (m_corner_widget->is_visible()) {
-        Gfx::Rect corner_rect { m_horizontal_scrollbar->relative_rect().right() + 1, m_vertical_scrollbar->relative_rect().bottom() + 1, width_occupied_by_vertical_scrollbar(), height_occupied_by_horizontal_scrollbar() };
+        Gfx::IntRect corner_rect { m_horizontal_scrollbar->relative_rect().right() + 1, m_vertical_scrollbar->relative_rect().bottom() + 1, width_occupied_by_vertical_scrollbar(), height_occupied_by_horizontal_scrollbar() };
         m_corner_widget->set_relative_rect(corner_rect);
     }
 }
@@ -95,7 +99,7 @@ void ScrollableWidget::resize_event(ResizeEvent& event)
     update_scrollbar_ranges();
 }
 
-Gfx::Size ScrollableWidget::available_size() const
+Gfx::IntSize ScrollableWidget::available_size() const
 {
     int available_width = frame_inner_rect().width() - m_size_occupied_by_fixed_elements.width() - width_occupied_by_vertical_scrollbar();
     int available_height = frame_inner_rect().height() - m_size_occupied_by_fixed_elements.height() - height_occupied_by_horizontal_scrollbar();
@@ -107,13 +111,13 @@ void ScrollableWidget::update_scrollbar_ranges()
     auto available_size = this->available_size();
 
     int excess_height = max(0, m_content_size.height() - available_size.height());
-    m_vertical_scrollbar->set_range(0, excess_height);
+    m_vertical_scrollbar->set_range(0, excess_height, available_size.height());
 
     if (should_hide_unnecessary_scrollbars())
         m_vertical_scrollbar->set_visible(excess_height > 0);
 
     int excess_width = max(0, m_content_size.width() - available_size.width());
-    m_horizontal_scrollbar->set_range(0, excess_width);
+    m_horizontal_scrollbar->set_range(0, excess_width, available_size.width());
 
     if (should_hide_unnecessary_scrollbars())
         m_horizontal_scrollbar->set_visible(excess_width > 0);
@@ -121,7 +125,7 @@ void ScrollableWidget::update_scrollbar_ranges()
     m_vertical_scrollbar->set_big_step(visible_content_rect().height() - m_vertical_scrollbar->step());
 }
 
-void ScrollableWidget::set_content_size(const Gfx::Size& size)
+void ScrollableWidget::set_content_size(const Gfx::IntSize& size)
 {
     if (m_content_size == size)
         return;
@@ -129,7 +133,7 @@ void ScrollableWidget::set_content_size(const Gfx::Size& size)
     update_scrollbar_ranges();
 }
 
-void ScrollableWidget::set_size_occupied_by_fixed_elements(const Gfx::Size& size)
+void ScrollableWidget::set_size_occupied_by_fixed_elements(const Gfx::IntSize& size)
 {
     if (m_size_occupied_by_fixed_elements == size)
         return;
@@ -147,40 +151,45 @@ int ScrollableWidget::width_occupied_by_vertical_scrollbar() const
     return m_vertical_scrollbar->is_visible() ? m_vertical_scrollbar->width() : 0;
 }
 
-Gfx::Rect ScrollableWidget::visible_content_rect() const
+Gfx::IntRect ScrollableWidget::visible_content_rect() const
 {
-    return {
+    Gfx::IntRect rect {
         m_horizontal_scrollbar->value(),
         m_vertical_scrollbar->value(),
         min(m_content_size.width(), frame_inner_rect().width() - width_occupied_by_vertical_scrollbar() - m_size_occupied_by_fixed_elements.width()),
         min(m_content_size.height(), frame_inner_rect().height() - height_occupied_by_horizontal_scrollbar() - m_size_occupied_by_fixed_elements.height())
     };
+    if (rect.is_empty())
+        return {};
+    return rect;
 }
 
-void ScrollableWidget::scroll_into_view(const Gfx::Rect& rect, Orientation orientation)
+void ScrollableWidget::scroll_into_view(const Gfx::IntRect& rect, Orientation orientation)
 {
     if (orientation == Orientation::Vertical)
         return scroll_into_view(rect, false, true);
     return scroll_into_view(rect, true, false);
 }
 
-void ScrollableWidget::scroll_into_view(const Gfx::Rect& rect, bool scroll_horizontally, bool scroll_vertically)
+void ScrollableWidget::scroll_into_view(const Gfx::IntRect& rect, bool scroll_horizontally, bool scroll_vertically)
 {
     auto visible_content_rect = this->visible_content_rect();
     if (visible_content_rect.contains(rect))
         return;
 
     if (scroll_vertically) {
-        if (rect.top() < visible_content_rect.top())
+        if (rect.top() < visible_content_rect.top()) {
             m_vertical_scrollbar->set_value(rect.top());
-        else if (rect.bottom() > visible_content_rect.bottom())
-            m_vertical_scrollbar->set_value(rect.bottom() - visible_content_rect.height());
+        } else if (rect.bottom() > visible_content_rect.bottom()) {
+            m_vertical_scrollbar->set_value(rect.bottom() - visible_content_rect.height() + 1);
+        }
     }
     if (scroll_horizontally) {
-        if (rect.left() < visible_content_rect.left())
+        if (rect.left() < visible_content_rect.left()) {
             m_horizontal_scrollbar->set_value(rect.left());
-        else if (rect.right() > visible_content_rect.right())
-            m_horizontal_scrollbar->set_value(rect.right() - visible_content_rect.width());
+        } else if (rect.right() > visible_content_rect.right()) {
+            m_horizontal_scrollbar->set_value(rect.right() - visible_content_rect.width() + 1);
+        }
     }
 }
 
@@ -196,15 +205,15 @@ void ScrollableWidget::set_scrollbars_enabled(bool scrollbars_enabled)
 
 void ScrollableWidget::scroll_to_top()
 {
-    scroll_into_view({ 0, 0, 1, 1 }, Orientation::Vertical);
+    scroll_into_view({}, Orientation::Vertical);
 }
 
 void ScrollableWidget::scroll_to_bottom()
 {
-    scroll_into_view({ 0, content_height(), 1, 1 }, Orientation::Vertical);
+    scroll_into_view({ 0, content_height(), 0, 0 }, Orientation::Vertical);
 }
 
-Gfx::Rect ScrollableWidget::widget_inner_rect() const
+Gfx::IntRect ScrollableWidget::widget_inner_rect() const
 {
     auto rect = frame_inner_rect();
     rect.set_width(rect.width() - width_occupied_by_vertical_scrollbar());
@@ -212,7 +221,7 @@ Gfx::Rect ScrollableWidget::widget_inner_rect() const
     return rect;
 }
 
-Gfx::Point ScrollableWidget::to_content_position(const Gfx::Point& widget_position) const
+Gfx::IntPoint ScrollableWidget::to_content_position(const Gfx::IntPoint& widget_position) const
 {
     auto content_position = widget_position;
     content_position.move_by(horizontal_scrollbar().value(), vertical_scrollbar().value());
@@ -220,7 +229,7 @@ Gfx::Point ScrollableWidget::to_content_position(const Gfx::Point& widget_positi
     return content_position;
 }
 
-Gfx::Point ScrollableWidget::to_widget_position(const Gfx::Point& content_position) const
+Gfx::IntPoint ScrollableWidget::to_widget_position(const Gfx::IntPoint& content_position) const
 {
     auto widget_position = content_position;
     widget_position.move_by(-horizontal_scrollbar().value(), -vertical_scrollbar().value());

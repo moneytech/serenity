@@ -31,6 +31,7 @@
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
+#include <AK/Utf32View.h>
 #include <LibCore/Forward.h>
 #include <LibGUI/Command.h>
 #include <LibGUI/Forward.h>
@@ -46,6 +47,7 @@ struct TextDocumentSpan {
     Color color;
     Optional<Color> background_color;
     bool is_skippable { false };
+    bool is_underlined { false };
     const Gfx::Font* font { nullptr };
     void* data { nullptr };
 };
@@ -73,11 +75,11 @@ public:
     };
 
     static NonnullRefPtr<TextDocument> create(Client* client = nullptr);
-    ~TextDocument();
+    virtual ~TextDocument();
 
-    size_t line_count() const { return (size_t)m_lines.size(); }
-    const TextDocumentLine& line(size_t line_index) const { return m_lines[(int)line_index]; }
-    TextDocumentLine& line(size_t line_index) { return m_lines[(int)line_index]; }
+    size_t line_count() const { return m_lines.size(); }
+    const TextDocumentLine& line(size_t line_index) const { return m_lines[line_index]; }
+    TextDocumentLine& line(size_t line_index) { return m_lines[line_index]; }
 
     void set_spans(const Vector<TextDocumentSpan>& spans) { m_spans = spans; }
 
@@ -87,8 +89,9 @@ public:
     NonnullOwnPtrVector<TextDocumentLine>& lines() { return m_lines; }
 
     bool has_spans() const { return !m_spans.is_empty(); }
+    Vector<TextDocumentSpan>& spans() { return m_spans; }
     const Vector<TextDocumentSpan>& spans() const { return m_spans; }
-    void set_span_at_index(size_t index, TextDocumentSpan span) { m_spans[(int)index] = move(span); }
+    void set_span_at_index(size_t index, TextDocumentSpan span) { m_spans[index] = move(span); }
 
     void append_line(NonnullOwnPtr<TextDocumentLine>);
     void remove_line(size_t line_index);
@@ -100,6 +103,7 @@ public:
 
     void update_views(Badge<TextDocumentLine>);
 
+    String text() const;
     String text_in_range(const TextRange&) const;
 
     Vector<TextRange> find_all(const StringView& needle) const;
@@ -110,12 +114,15 @@ public:
     TextPosition next_position_after(const TextPosition&, SearchShouldWrap = SearchShouldWrap::Yes) const;
     TextPosition previous_position_before(const TextPosition&, SearchShouldWrap = SearchShouldWrap::Yes) const;
 
-    char character_at(const TextPosition&) const;
+    u32 code_point_at(const TextPosition&) const;
 
     TextRange range_for_entire_line(size_t line_index) const;
 
     Optional<TextDocumentSpan> first_non_skippable_span_before(const TextPosition&) const;
     Optional<TextDocumentSpan> first_non_skippable_span_after(const TextPosition&) const;
+
+    TextPosition first_word_break_before(const TextPosition&, bool start_at_column_before) const;
+    TextPosition first_word_break_after(const TextPosition&) const;
 
     void add_to_undo_stack(NonnullOwnPtr<TextDocumentUndoCommand>);
 
@@ -127,13 +134,18 @@ public:
     void notify_did_change();
     void set_all_cursors(const TextPosition&);
 
-    TextPosition insert_at(const TextPosition&, char, const Client* = nullptr);
+    TextPosition insert_at(const TextPosition&, u32, const Client* = nullptr);
     TextPosition insert_at(const TextPosition&, const StringView&, const Client* = nullptr);
     void remove(const TextRange&);
 
-private:
+    virtual bool is_code_document() const { return false; }
+
+    bool is_empty() const;
+
+protected:
     explicit TextDocument(Client* client);
 
+private:
     void update_undo_timer();
 
     NonnullOwnPtrVector<TextDocumentLine> m_lines;
@@ -147,29 +159,34 @@ private:
 };
 
 class TextDocumentLine {
-    friend class GTextEditor;
-    friend class TextDocument;
-
 public:
     explicit TextDocumentLine(TextDocument&);
     explicit TextDocumentLine(TextDocument&, const StringView&);
 
-    StringView view() const { return { characters(), (size_t)length() }; }
-    const char* characters() const { return m_text.data(); }
-    size_t length() const { return (size_t)m_text.size() - 1; }
+    String to_utf8() const;
+
+    Utf32View view() const { return { code_points(), length() }; }
+    const u32* code_points() const { return m_text.data(); }
+    size_t length() const { return m_text.size(); }
     void set_text(TextDocument&, const StringView&);
-    void append(TextDocument&, char);
-    void prepend(TextDocument&, char);
-    void insert(TextDocument&, size_t index, char);
+    void set_text(TextDocument&, Vector<u32>);
+    void append(TextDocument&, u32);
+    void prepend(TextDocument&, u32);
+    void insert(TextDocument&, size_t index, u32);
     void remove(TextDocument&, size_t index);
-    void append(TextDocument&, const char*, size_t);
+    void append(TextDocument&, const u32*, size_t);
     void truncate(TextDocument&, size_t length);
     void clear(TextDocument&);
+    void remove_range(TextDocument&, size_t start, size_t length);
+
     size_t first_non_whitespace_column() const;
+    Optional<size_t> last_non_whitespace_column() const;
+    bool ends_in_whitespace() const;
+    bool is_empty() const { return length() == 0; }
 
 private:
     // NOTE: This vector is null terminated.
-    Vector<char> m_text;
+    Vector<u32> m_text;
 };
 
 class TextDocumentUndoCommand : public Command {
@@ -194,6 +211,9 @@ public:
     InsertTextCommand(TextDocument&, const String&, const TextPosition&);
     virtual void undo() override;
     virtual void redo() override;
+    virtual bool is_insert_text() const override { return true; }
+    const String& text() const { return m_text; }
+    const TextRange& range() const { return m_range; }
 
 private:
     String m_text;
@@ -205,6 +225,8 @@ public:
     RemoveTextCommand(TextDocument&, const String&, const TextRange&);
     virtual void undo() override;
     virtual void redo() override;
+    virtual bool is_remove_text() const override { return true; }
+    const TextRange& range() const { return m_range; }
 
 private:
     String m_text;

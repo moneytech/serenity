@@ -42,7 +42,7 @@ RadioButton::~RadioButton()
 {
 }
 
-Gfx::Size RadioButton::circle_size()
+Gfx::IntSize RadioButton::circle_size()
 {
     return { 12, 12 };
 }
@@ -52,12 +52,18 @@ void RadioButton::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    Gfx::Rect circle_rect { { 2, 0 }, circle_size() };
+    if (fill_with_background_color())
+        painter.fill_rect(rect(), palette().window());
+
+    if (is_enabled() && is_hovered())
+        painter.fill_rect(rect(), palette().hover_highlight());
+
+    Gfx::IntRect circle_rect { { 2, 0 }, circle_size() };
     circle_rect.center_vertically_within(rect());
 
     Gfx::StylePainter::paint_radio_button(painter, circle_rect, palette(), is_checked(), is_being_pressed());
 
-    Gfx::Rect text_rect { circle_rect.right() + 4, 0, font().width(text()), font().glyph_height() };
+    Gfx::IntRect text_rect { circle_rect.right() + 4, 0, font().width(text()), font().glyph_height() };
     text_rect.center_vertically_within(rect());
     paint_text(painter, text_rect, font(), Gfx::TextAlignment::TopLeft);
 }
@@ -68,11 +74,11 @@ void RadioButton::for_each_in_group(Callback callback)
     if (!parent())
         return;
     parent()->for_each_child_of_type<RadioButton>([&](auto& child) {
-        return callback(static_cast<RadioButton&>(child));
+        return callback(downcast<RadioButton>(child));
     });
 }
 
-void RadioButton::click()
+void RadioButton::click(unsigned)
 {
     if (!is_enabled())
         return;

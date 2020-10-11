@@ -25,14 +25,13 @@
  */
 
 #include <LibCore/EventLoop.h>
-#include <LibGUI/Desktop.h>
 #include <LibGUI/Dialog.h>
 #include <LibGUI/Event.h>
 
 namespace GUI {
 
-Dialog::Dialog(Core::Object* parent)
-    : Window(parent)
+Dialog::Dialog(Window* parent_window)
+    : Window(parent_window)
 {
     set_modal(true);
 }
@@ -45,18 +44,22 @@ int Dialog::exec()
 {
     ASSERT(!m_event_loop);
     m_event_loop = make<Core::EventLoop>();
-    auto new_rect = rect();
     if (parent() && parent()->is_window()) {
         auto& parent_window = *static_cast<Window*>(parent());
-        new_rect.center_within(parent_window.rect());
+        if (parent_window.is_visible()) {
+            auto new_rect = rect();
+            new_rect.center_within(parent_window.rect());
+            set_rect(new_rect);
+        } else {
+            center_on_screen();
+        }
     } else {
-        new_rect.center_within(Desktop::the().rect());
+        center_on_screen();
     }
-    set_rect(new_rect);
     show();
     auto result = m_event_loop->exec();
     m_event_loop = nullptr;
-    dbgprintf("%s: event loop returned with result %d\n", class_name(), result);
+    dbg() << *this << ": Event loop returned with result " << result;
     remove_from_parent();
     return result;
 }
@@ -66,7 +69,7 @@ void Dialog::done(int result)
     if (!m_event_loop)
         return;
     m_result = result;
-    dbgprintf("%s: quit event loop with result %d\n", class_name(), result);
+    dbg() << *this << ": Quit event loop with result " << result;
     m_event_loop->quit(result);
 }
 

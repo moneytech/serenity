@@ -26,24 +26,22 @@
 
 #pragma once
 
+#include <AK/JsonObject.h>
 #include <AK/String.h>
 #include <LibCore/Object.h>
+#include <LibGUI/Application.h>
 #include <LibGUI/Event.h>
 #include <LibGUI/Forward.h>
+#include <LibGUI/Margins.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Orientation.h>
 #include <LibGfx/Rect.h>
+#include <LibGfx/StandardCursor.h>
 
-#define REGISTER_GWIDGET(class_name)                          \
-    extern WidgetClassRegistration registration_##class_name; \
-    WidgetClassRegistration registration_##class_name(#class_name, []() { return class_name::construct(); });
-
-template<>
-inline bool Core::is<GUI::Widget>(const Core::Object& object)
-{
-    return object.is_widget();
-}
+#define REGISTER_WIDGET(namespace_, class_name)                    \
+    extern GUI::WidgetClassRegistration registration_##class_name; \
+    GUI::WidgetClassRegistration registration_##class_name(#namespace_ "::" #class_name, []() { return namespace_::class_name::construct(); });
 
 namespace GUI {
 
@@ -72,8 +70,9 @@ enum class VerticalDirection {
 };
 
 class WidgetClassRegistration {
-    AK_MAKE_NONCOPYABLE(WidgetClassRegistration)
-    AK_MAKE_NONMOVABLE(WidgetClassRegistration)
+    AK_MAKE_NONCOPYABLE(WidgetClassRegistration);
+    AK_MAKE_NONMOVABLE(WidgetClassRegistration);
+
 public:
     WidgetClassRegistration(const String& class_name, Function<NonnullRefPtr<Widget>()> factory);
     ~WidgetClassRegistration();
@@ -96,21 +95,36 @@ public:
 
     Layout* layout() { return m_layout.ptr(); }
     const Layout* layout() const { return m_layout.ptr(); }
-    void set_layout(OwnPtr<Layout>&&);
+    void set_layout(NonnullRefPtr<Layout>);
+
+    template<class T, class... Args>
+    inline T& set_layout(Args&&... args)
+    {
+        auto layout = T::construct(forward<Args>(args)...);
+        set_layout(*layout);
+        return layout;
+    }
 
     SizePolicy horizontal_size_policy() const { return m_horizontal_size_policy; }
     SizePolicy vertical_size_policy() const { return m_vertical_size_policy; }
     SizePolicy size_policy(Orientation orientation) { return orientation == Orientation::Horizontal ? m_horizontal_size_policy : m_vertical_size_policy; }
     void set_size_policy(SizePolicy horizontal_policy, SizePolicy vertical_policy);
     void set_size_policy(Orientation, SizePolicy);
+    void set_horizontal_size_policy(SizePolicy policy) { set_size_policy(policy, vertical_size_policy()); }
+    void set_vertical_size_policy(SizePolicy policy) { set_size_policy(horizontal_size_policy(), policy); }
 
-    Gfx::Size preferred_size() const { return m_preferred_size; }
-    void set_preferred_size(const Gfx::Size&);
+    Gfx::IntSize preferred_size() const { return m_preferred_size; }
+    void set_preferred_size(const Gfx::IntSize&);
     void set_preferred_size(int width, int height) { set_preferred_size({ width, height }); }
+
+    int preferred_width() const { return preferred_size().width(); }
+    int preferred_height() const { return preferred_size().height(); }
+    void set_preferred_width(int w) { set_preferred_size(w, preferred_height()); }
+    void set_preferred_height(int h) { set_preferred_size(preferred_width(), h); }
 
     bool has_tooltip() const { return !m_tooltip.is_empty(); }
     String tooltip() const { return m_tooltip; }
-    void set_tooltip(const StringView& tooltip) { m_tooltip = tooltip; }
+    void set_tooltip(const StringView&);
 
     bool is_enabled() const { return m_enabled; }
     void set_enabled(bool);
@@ -123,11 +137,11 @@ public:
     // This is called after children have been painted.
     virtual void second_paint_event(PaintEvent&);
 
-    Gfx::Rect relative_rect() const { return m_relative_rect; }
-    Gfx::Point relative_position() const { return m_relative_rect.location(); }
+    Gfx::IntRect relative_rect() const { return m_relative_rect; }
+    Gfx::IntPoint relative_position() const { return m_relative_rect.location(); }
 
-    Gfx::Rect window_relative_rect() const;
-    Gfx::Rect screen_relative_rect() const;
+    Gfx::IntRect window_relative_rect() const;
+    Gfx::IntRect screen_relative_rect() const;
 
     int x() const { return m_relative_rect.x(); }
     int y() const { return m_relative_rect.y(); }
@@ -135,27 +149,31 @@ public:
     int height() const { return m_relative_rect.height(); }
     int length(Orientation orientation) const { return orientation == Orientation::Vertical ? height() : width(); }
 
-    Gfx::Rect rect() const { return { 0, 0, width(), height() }; }
-    Gfx::Size size() const { return m_relative_rect.size(); }
+    Gfx::IntRect rect() const { return { 0, 0, width(), height() }; }
+    Gfx::IntSize size() const { return m_relative_rect.size(); }
 
     void update();
-    void update(const Gfx::Rect&);
+    void update(const Gfx::IntRect&);
 
     virtual bool accepts_focus() const { return false; }
 
     bool is_focused() const;
-    void set_focus(bool);
+    void set_focus(bool, FocusSource = FocusSource::Programmatic);
+
+    Widget* focus_proxy() { return m_focus_proxy; }
+    const Widget* focus_proxy() const { return m_focus_proxy; }
+    void set_focus_proxy(Widget*);
 
     enum class ShouldRespectGreediness { No = 0,
         Yes };
     struct HitTestResult {
         Widget* widget { nullptr };
-        Gfx::Point local_position;
+        Gfx::IntPoint local_position;
     };
-    HitTestResult hit_test(const Gfx::Point&, ShouldRespectGreediness = ShouldRespectGreediness::Yes);
-    Widget* child_at(const Gfx::Point&) const;
+    HitTestResult hit_test(const Gfx::IntPoint&, ShouldRespectGreediness = ShouldRespectGreediness::Yes);
+    Widget* child_at(const Gfx::IntPoint&) const;
 
-    void set_relative_rect(const Gfx::Rect&);
+    void set_relative_rect(const Gfx::IntRect&);
     void set_relative_rect(int x, int y, int width, int height) { set_relative_rect({ x, y, width, height }); }
 
     void set_x(int x) { set_relative_rect(x, y(), width(), height()); }
@@ -163,13 +181,13 @@ public:
     void set_width(int width) { set_relative_rect(x(), y(), width, height()); }
     void set_height(int height) { set_relative_rect(x(), y(), width(), height); }
 
-    void move_to(const Gfx::Point& point) { set_relative_rect({ point, relative_rect().size() }); }
+    void move_to(const Gfx::IntPoint& point) { set_relative_rect({ point, relative_rect().size() }); }
     void move_to(int x, int y) { move_to({ x, y }); }
-    void resize(const Gfx::Size& size) { set_relative_rect({ relative_rect().location(), size }); }
+    void resize(const Gfx::IntSize& size) { set_relative_rect({ relative_rect().location(), size }); }
     void resize(int width, int height) { resize({ width, height }); }
 
     void move_by(int x, int y) { move_by({ x, y }); }
-    void move_by(const Gfx::Point& delta) { set_relative_rect({ relative_position().translated(delta), size() }); }
+    void move_by(const Gfx::IntPoint& delta) { set_relative_rect({ relative_position().translated(delta), size() }); }
 
     Gfx::ColorRole background_role() const { return m_background_role; }
     void set_background_role(Gfx::ColorRole);
@@ -240,8 +258,8 @@ public:
     void for_each_child_widget(Callback callback)
     {
         for_each_child([&](auto& child) {
-            if (Core::is<Widget>(child))
-                return callback(Core::to<Widget>(child));
+            if (is<Widget>(child))
+                return callback(downcast<Widget>(child));
             return IterationDecision::Continue;
         });
     }
@@ -251,19 +269,35 @@ public:
     virtual bool is_radio_button() const { return false; }
     virtual bool is_abstract_button() const { return false; }
 
-    virtual void save_to(AK::JsonObject&) override;
-
     void do_layout();
 
     Gfx::Palette palette() const;
     void set_palette(const Gfx::Palette&);
 
+    const Margins& content_margins() const { return m_content_margins; }
+    void set_content_margins(const Margins&);
+
+    Gfx::IntRect content_rect() const;
+
+    void set_accepts_emoji_input(bool b) { m_accepts_emoji_input = b; }
+    bool accepts_emoji_input() const { return m_accepts_emoji_input; }
+
+    virtual Gfx::IntRect children_clip_rect() const;
+
+    Gfx::StandardCursor override_cursor() const { return m_override_cursor; }
+    void set_override_cursor(Gfx::StandardCursor);
+
+    bool load_from_json(const StringView&);
+    bool load_from_json(const JsonObject&);
+    Widget* find_child_by_name(const String&);
+    Widget* find_descendant_by_name(const String&);
+
 protected:
     Widget();
 
-    virtual void custom_layout() {}
-    virtual void did_change_font() {}
-    virtual void did_layout() {}
+    virtual void custom_layout() { }
+    virtual void did_change_font() { }
+    virtual void did_layout() { }
     virtual void paint_event(PaintEvent&);
     virtual void resize_event(ResizeEvent&);
     virtual void show_event(ShowEvent&);
@@ -274,17 +308,20 @@ protected:
     virtual void mousedown_event(MouseEvent&);
     virtual void mouseup_event(MouseEvent&);
     virtual void mousewheel_event(MouseEvent&);
-    virtual void click_event(MouseEvent&);
     virtual void doubleclick_event(MouseEvent&);
     virtual void context_menu_event(ContextMenuEvent&);
-    virtual void focusin_event(Core::Event&);
-    virtual void focusout_event(Core::Event&);
+    virtual void focusin_event(FocusEvent&);
+    virtual void focusout_event(FocusEvent&);
     virtual void enter_event(Core::Event&);
     virtual void leave_event(Core::Event&);
     virtual void child_event(Core::ChildEvent&) override;
     virtual void change_event(Event&);
     virtual void drag_move_event(DragEvent&);
     virtual void drop_event(DropEvent&);
+    virtual void theme_change_event(ThemeChangeEvent&);
+
+    virtual void did_begin_inspection() override;
+    virtual void did_end_inspection() override;
 
 private:
     void handle_paint_event(PaintEvent&);
@@ -294,13 +331,15 @@ private:
     void handle_mouseup_event(MouseEvent&);
     void handle_enter_event(Core::Event&);
     void handle_leave_event(Core::Event&);
-    void focus_previous_widget();
-    void focus_next_widget();
+    void focus_previous_widget(FocusSource);
+    void focus_next_widget(FocusSource);
+
+    void show_tooltip();
 
     Window* m_window { nullptr };
-    OwnPtr<Layout> m_layout;
+    RefPtr<Layout> m_layout;
 
-    Gfx::Rect m_relative_rect;
+    Gfx::IntRect m_relative_rect;
     Gfx::ColorRole m_background_role;
     Gfx::ColorRole m_foreground_role;
     Color m_background_color;
@@ -310,27 +349,37 @@ private:
 
     SizePolicy m_horizontal_size_policy { SizePolicy::Fill };
     SizePolicy m_vertical_size_policy { SizePolicy::Fill };
-    Gfx::Size m_preferred_size;
+    Gfx::IntSize m_preferred_size;
+    Margins m_content_margins;
 
     bool m_fill_with_background_color { false };
     bool m_visible { true };
     bool m_greedy_for_hits { false };
     bool m_enabled { true };
     bool m_updates_enabled { true };
+    bool m_accepts_emoji_input { false };
 
     NonnullRefPtr<Gfx::PaletteImpl> m_palette;
+
+    WeakPtr<Widget> m_focus_proxy;
+
+    Gfx::StandardCursor m_override_cursor { Gfx::StandardCursor::None };
 };
 
 inline Widget* Widget::parent_widget()
 {
-    if (parent() && Core::is<Widget>(*parent()))
-        return &Core::to<Widget>(*parent());
+    if (parent() && is<Widget>(*parent()))
+        return &downcast<Widget>(*parent());
     return nullptr;
 }
 inline const Widget* Widget::parent_widget() const
 {
-    if (parent() && Core::is<Widget>(*parent()))
-        return &Core::to<const Widget>(*parent());
+    if (parent() && is<Widget>(*parent()))
+        return &downcast<const Widget>(*parent());
     return nullptr;
 }
 }
+
+AK_BEGIN_TYPE_TRAITS(GUI::Widget)
+static bool is_type(const Core::Object& object) { return object.is_widget(); }
+AK_END_TYPE_TRAITS()

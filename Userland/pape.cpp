@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
@@ -44,7 +43,7 @@ static int handle_show_all()
 {
     Core::DirIterator di("/res/wallpapers", Core::DirIterator::SkipDots);
     if (di.has_error()) {
-        fprintf(stderr, "CDirIterator: %s\n", di.error_string());
+        fprintf(stderr, "DirIterator: %s\n", di.error_string());
         return 1;
     }
 
@@ -86,7 +85,7 @@ int main(int argc, char** argv)
     args_parser.add_positional_argument(name, "Wallpaper to set", "name", Core::ArgsParser::Required::No);
     args_parser.parse(argc, argv);
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (show_all)
         return handle_show_all();

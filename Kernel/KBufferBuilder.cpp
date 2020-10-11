@@ -26,7 +26,7 @@
 
 #include <AK/PrintfImplementation.h>
 #include <AK/StdLibExtras.h>
-#include <KBufferBuilder.h>
+#include <Kernel/KBufferBuilder.h>
 #include <stdarg.h>
 
 namespace Kernel {
@@ -45,7 +45,7 @@ KBuffer KBufferBuilder::build()
 }
 
 KBufferBuilder::KBufferBuilder()
-    : m_buffer(KBuffer::create_with_size(4 * MB, Region::Access::Read | Region::Access::Write))
+    : m_buffer(KBuffer::create_with_size(4 * MiB, Region::Access::Read | Region::Access::Write))
 {
 }
 
@@ -65,7 +65,7 @@ void KBufferBuilder::append(const char* characters, int length)
         return;
     if (!can_append(length))
         return;
-    memcpy(insertion_ptr() + m_size, characters, length);
+    memcpy(insertion_ptr(), characters, length);
     m_size += length;
 }
 

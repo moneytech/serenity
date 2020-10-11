@@ -28,6 +28,7 @@
 
 #include <AK/String.h>
 #include <dirent.h>
+#include <string.h>
 
 namespace Core {
 
@@ -58,5 +59,7 @@ private:
 
     bool advance_next();
 };
+
+String find_executable_in_path(String filename);
 
 }

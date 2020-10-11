@@ -31,6 +31,7 @@
 #include <LibCore/DateTime.h>
 #include <LibCore/Notifier.h>
 #include <LibGUI/Model.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -72,6 +73,7 @@ public:
         gid_t gid { 0 };
         ino_t inode { 0 };
         time_t mtime { 0 };
+        bool is_accessible_directory { false };
 
         size_t total_size { 0 };
 
@@ -79,21 +81,40 @@ public:
         bool is_directory() const { return S_ISDIR(mode); }
         bool is_executable() const { return mode & (S_IXUSR | S_IXGRP | S_IXOTH); }
 
-        String full_path(const FileSystemModel&) const;
+        bool is_selected() const { return m_selected; }
+        void set_selected(bool selected);
+
+        bool has_error() const { return m_error != 0; }
+        int error() const { return m_error; }
+        const char* error_string() const { return strerror(m_error); }
+
+        String full_path() const;
 
     private:
         friend class FileSystemModel;
+
+        explicit Node(FileSystemModel& model)
+            : m_model(model)
+        {
+        }
+
+        FileSystemModel& m_model;
 
         Node* parent { nullptr };
         NonnullOwnPtrVector<Node> children;
         bool has_traversed { false };
 
+        bool m_selected { false };
+
         int m_watch_fd { -1 };
         RefPtr<Core::Notifier> m_notifier;
 
-        ModelIndex index(const FileSystemModel&, int column) const;
-        void traverse_if_needed(const FileSystemModel&);
-        void reify_if_needed(const FileSystemModel&);
+        int m_error { 0 };
+        bool m_parent_of_root { false };
+
+        ModelIndex index(int column) const;
+        void traverse_if_needed();
+        void reify_if_needed();
         bool fetch_data(const String& full_path, bool is_root);
     };
 
@@ -108,28 +129,36 @@ public:
     String full_path(const ModelIndex&) const;
     ModelIndex index(const StringView& path, int column) const;
 
+    void update_node_on_selection(const ModelIndex&, const bool);
+    ModelIndex m_previously_selected_index {};
+
     const Node& node(const ModelIndex& index) const;
-    GIcon icon_for_file(const mode_t mode, const String& name) const;
 
     Function<void(int done, int total)> on_thumbnail_progress;
-    Function<void()> on_root_path_change;
+    Function<void()> on_complete;
+    Function<void(int error, const char* error_string)> on_error;
 
     virtual int tree_column() const override { return Column::Name; }
     virtual int row_count(const ModelIndex& = ModelIndex()) const override;
     virtual int column_count(const ModelIndex& = ModelIndex()) const override;
     virtual String column_name(int column) const override;
-    virtual ColumnMetadata column_metadata(int column) const override;
-    virtual Variant data(const ModelIndex&, Role = Role::Display) const override;
+    virtual Variant data(const ModelIndex&, ModelRole = ModelRole::Display) const override;
     virtual void update() override;
     virtual ModelIndex parent_index(const ModelIndex&) const override;
     virtual ModelIndex index(int row, int column = 0, const ModelIndex& parent = ModelIndex()) const override;
     virtual StringView drag_data_type() const override { return "text/uri-list"; }
     virtual bool accepts_drag(const ModelIndex&, const StringView& data_type) override;
+    virtual bool is_column_sortable(int column_index) const override { return column_index != Column::Icon; }
+    virtual bool is_editable(const ModelIndex&) const override;
+    virtual void set_data(const ModelIndex&, const Variant&) override;
 
     static String timestamp_string(time_t timestamp)
     {
         return Core::DateTime::from_timestamp(timestamp).to_string();
     }
+
+    bool should_show_dotfiles() const { return m_should_show_dotfiles; }
+    void set_should_show_dotfiles(bool);
 
 private:
     FileSystemModel(const StringView& root_path, Mode);
@@ -141,23 +170,16 @@ private:
     HashMap<gid_t, String> m_group_names;
 
     bool fetch_thumbnail_for(const Node& node);
-    GIcon icon_for(const Node& node) const;
+    GUI::Icon icon_for(const Node& node) const;
 
     String m_root_path;
     Mode m_mode { Invalid };
     OwnPtr<Node> m_root { nullptr };
 
-    GIcon m_directory_icon;
-    GIcon m_file_icon;
-    GIcon m_symlink_icon;
-    GIcon m_socket_icon;
-    GIcon m_executable_icon;
-    GIcon m_filetype_image_icon;
-    GIcon m_filetype_sound_icon;
-    GIcon m_filetype_html_icon;
-
     unsigned m_thumbnail_progress { 0 };
     unsigned m_thumbnail_progress_total { 0 };
+
+    bool m_should_show_dotfiles { false };
 };
 
 }

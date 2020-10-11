@@ -24,6 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#pragma once
+
 namespace Core {
 
 class ArgsParser;
@@ -32,13 +34,10 @@ class ConfigFile;
 class CustomEvent;
 class DateTime;
 class DirIterator;
-class ElapsedTime;
+class ElapsedTimer;
 class Event;
 class EventLoop;
 class File;
-class HttpJob;
-class HttpRequest;
-class HttpResponse;
 class IODevice;
 class LocalServer;
 class LocalSocket;
@@ -54,8 +53,8 @@ class TCPServer;
 class TCPSocket;
 class Timer;
 class TimerEvent;
-class UdpServer;
-class UdpSocket;
+class UDPServer;
+class UDPSocket;
 
 enum class TimerShouldFireWhenNotVisible;
 

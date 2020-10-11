@@ -44,18 +44,18 @@ public:
     const Inode& inode() const { return *m_inode; }
     Inode& inode() { return *m_inode; }
 
-    virtual bool can_read(const FileDescription&) const override { return true; }
-    virtual bool can_write(const FileDescription&) const override { return true; }
+    virtual bool can_read(const FileDescription&, size_t) const override { return true; }
+    virtual bool can_write(const FileDescription&, size_t) const override { return true; }
 
-    virtual ssize_t read(FileDescription&, u8*, ssize_t) override;
-    virtual ssize_t write(FileDescription&, const u8*, ssize_t) override;
-    virtual KResultOr<Region*> mmap(Process&, FileDescription&, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot) override;
+    virtual KResultOr<size_t> read(FileDescription&, size_t, UserOrKernelBuffer&, size_t) override;
+    virtual KResultOr<size_t> write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t) override;
+    virtual KResultOr<Region*> mmap(Process&, FileDescription&, VirtualAddress preferred_vaddr, size_t offset, size_t size, int prot, bool shared) override;
 
     virtual String absolute_path(const FileDescription&) const override;
 
     virtual KResult truncate(u64) override;
-    virtual KResult chown(uid_t, gid_t) override;
-    virtual KResult chmod(mode_t) override;
+    virtual KResult chown(FileDescription&, uid_t, gid_t) override;
+    virtual KResult chmod(FileDescription&, mode_t) override;
 
     virtual const char* class_name() const override { return "InodeFile"; }
 

@@ -37,13 +37,12 @@ namespace AK {
 class JsonValue {
 public:
     enum class Type {
-        Undefined,
         Null,
         Int32,
         UnsignedInt32,
         Int64,
         UnsignedInt64,
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
         Double,
 #endif
         Bool,
@@ -52,7 +51,7 @@ public:
         Object,
     };
 
-    static JsonValue from_string(const StringView&);
+    static Optional<JsonValue> from_string(const StringView&);
 
     explicit JsonValue(Type = Type::Null);
     ~JsonValue() { clear(); }
@@ -63,12 +62,14 @@ public:
     JsonValue& operator=(const JsonValue&);
     JsonValue& operator=(JsonValue&&);
 
-    JsonValue(i32);
-    JsonValue(u32);
-    JsonValue(i64);
-    JsonValue(u64);
+    JsonValue(int);
+    JsonValue(unsigned);
+    JsonValue(long);
+    JsonValue(long unsigned);
+    JsonValue(long long);
+    JsonValue(long long unsigned);
 
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
     JsonValue(double);
 #endif
     JsonValue(bool);
@@ -172,7 +173,7 @@ public:
         return *m_value.as_array;
     }
 
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
     double as_double() const
     {
         ASSERT(is_double());
@@ -186,14 +187,13 @@ public:
     }
 
     bool is_null() const { return m_type == Type::Null; }
-    bool is_undefined() const { return m_type == Type::Undefined; }
     bool is_bool() const { return m_type == Type::Bool; }
     bool is_string() const { return m_type == Type::String; }
     bool is_i32() const { return m_type == Type::Int32; }
     bool is_u32() const { return m_type == Type::UnsignedInt32; }
     bool is_i64() const { return m_type == Type::Int64; }
     bool is_u64() const { return m_type == Type::UnsignedInt64; }
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
     bool is_double() const
     {
         return m_type == Type::Double;
@@ -211,7 +211,7 @@ public:
         case Type::UnsignedInt32:
         case Type::Int64:
         case Type::UnsignedInt64:
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
         case Type::Double:
 #endif
             return true;
@@ -223,7 +223,7 @@ public:
     template<typename T>
     T to_number(T default_value = 0) const
     {
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
         if (is_double())
             return (T)as_double();
 #endif
@@ -238,17 +238,19 @@ public:
         return default_value;
     }
 
+    bool equals(const JsonValue& other) const;
+
 private:
     void clear();
     void copy_from(const JsonValue&);
 
-    Type m_type { Type::Undefined };
+    Type m_type { Type::Null };
 
     union {
         StringImpl* as_string { nullptr };
         JsonArray* as_array;
         JsonObject* as_object;
-#if !defined(KERNEL) && !defined(BOOTSTRAPPER)
+#if !defined(KERNEL)
         double as_double;
 #endif
         i32 as_i32;

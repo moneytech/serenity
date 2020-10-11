@@ -26,10 +26,12 @@
 
 #pragma once
 
+#include <AK/RefPtr.h>
 #include <AK/String.h>
 #include <AK/Types.h>
 #include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
+#include <Kernel/Interrupts/IRQController.h>
 
 namespace Kernel {
 
@@ -37,15 +39,17 @@ class IRQHandler : public GenericInterruptHandler {
 public:
     virtual ~IRQHandler();
 
-    virtual void handle_interrupt(RegisterState& regs) { handle_irq(regs); }
-    virtual void handle_irq(RegisterState&) = 0;
+    virtual void handle_interrupt(const RegisterState& regs) { handle_irq(regs); }
+    virtual void handle_irq(const RegisterState&) = 0;
 
     void enable_irq();
     void disable_irq();
 
     virtual bool eoi() override;
 
-    virtual HandlerPurpose purpose() const override { return HandlerPurpose::IRQHandler; }
+    virtual HandlerType type() const override { return HandlerType::IRQHandler; }
+    virtual const char* purpose() const override { return "IRQ Handler"; }
+    virtual const char* controller() const override { return m_responsible_irq_controller->model(); }
 
     virtual size_t sharing_devices_count() const override { return 0; }
     virtual bool is_shared_handler() const override { return false; }
@@ -58,6 +62,7 @@ protected:
 private:
     bool m_shared_with_others { false };
     bool m_enabled { false };
+    RefPtr<IRQController> m_responsible_irq_controller;
 };
 
 }

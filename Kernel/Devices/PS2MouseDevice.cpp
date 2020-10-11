@@ -24,9 +24,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Memory.h>
+#include <AK/Singleton.h>
 #include <Kernel/Devices/PS2MouseDevice.h>
 #include <Kernel/Devices/VMWareBackdoor.h>
-#include <LibBareMetal/IO.h>
+#include <Kernel/IO.h>
 
 namespace Kernel {
 
@@ -50,25 +52,17 @@ namespace Kernel {
 #define PS2MOUSE_RESEND 0xFE
 #define PS2MOUSE_RESET 0xFF
 
-#define PS2MOUSE_LEFT_CLICK 0x01
-#define PS2MOUSE_RIGHT_CLICK 0x02
-#define PS2MOUSE_MIDDLE_CLICK 0x04
-
-#define VMMOUSE_LEFT_CLICK 0x20
-#define VMMOUSE_RIGHT_CLICK 0x10
-#define VMMOUSE_MIDDLE_CLICK 0x08
-
 #define PS2MOUSE_INTELLIMOUSE_ID 0x03
+#define PS2MOUSE_INTELLIMOUSE_EXPLORER_ID 0x04
 
 //#define PS2MOUSE_DEBUG
 
-static PS2MouseDevice* s_the;
+static AK::Singleton<PS2MouseDevice> s_the;
 
 PS2MouseDevice::PS2MouseDevice()
     : IRQHandler(IRQ_MOUSE)
     , CharacterDevice(10, 1)
 {
-    s_the = this;
     initialize();
 }
 
@@ -76,73 +70,28 @@ PS2MouseDevice::~PS2MouseDevice()
 {
 }
 
+void PS2MouseDevice::create()
+{
+    s_the.ensure_instance();
+}
+
 PS2MouseDevice& PS2MouseDevice::the()
 {
     return *s_the;
 }
 
-void PS2MouseDevice::handle_vmmouse_absolute_pointer()
+void PS2MouseDevice::handle_irq(const RegisterState&)
 {
-    VMWareCommand command;
-    command.bx = 0;
-    command.command = VMMOUSE_STATUS;
-    VMWareBackdoor::the().send(command);
-    if (command.ax == 0xFFFF0000) {
-#ifdef PS2MOUSE_DEBUG
-        dbgprintf("Reset vmmouse.\n");
-#endif
-        VMWareBackdoor::the().disable_absolute_vmmouse();
-        VMWareBackdoor::the().enable_absolute_vmmouse();
-        return;
+    if (auto* backdoor = VMWareBackdoor::the()) {
+        if (backdoor->vmmouse_is_absolute()) {
+            IO::in8(I8042_BUFFER);
+            auto packet = backdoor->receive_mouse_packet();
+            m_entropy_source.add_random_event(packet);
+            if (packet.has_value())
+                m_queue.enqueue(packet.value());
+            return;
+        }
     }
-    int words = command.ax & 0xFFFF;
-
-    if (!words || words % 4)
-        return;
-    command.size = 4;
-    command.command = VMMOUSE_DATA;
-    VMWareBackdoor::the().send(command);
-
-    int buttons = (command.ax & 0xFFFF);
-    int x = (command.bx);
-    int y = (command.cx);
-    int z = (command.dx);
-
-#ifdef PS2MOUSE_DEBUG
-    dbgprintf("Absolute Mouse: Buttons %x\n", buttons);
-    dbgprintf("Mouse: X %d, Y %d, Z %d\n", x, y, z);
-#endif
-    MousePacket packet;
-    packet.x = x;
-    packet.y = y;
-    packet.z = z;
-    if (buttons & VMMOUSE_LEFT_CLICK) {
-        packet.buttons |= PS2MOUSE_LEFT_CLICK;
-    }
-    if (buttons & VMMOUSE_RIGHT_CLICK) {
-        packet.buttons |= PS2MOUSE_RIGHT_CLICK;
-    }
-    if (buttons & VMMOUSE_MIDDLE_CLICK) {
-        packet.buttons |= PS2MOUSE_MIDDLE_CLICK;
-    }
-    packet.is_relative = false;
-    m_queue.enqueue(packet);
-}
-
-void PS2MouseDevice::handle_irq(RegisterState&)
-{
-
-    if (VMWareBackdoor::the().vmmouse_is_absolute()) {
-#ifdef PS2MOUSE_DEBUG
-        dbgprintf("Handling PS2 vmmouse.\n");
-#endif
-        IO::in8(I8042_BUFFER);
-        handle_vmmouse_absolute_pointer();
-        return;
-    }
-#ifdef PS2MOUSE_DEBUG
-    dbgprintf("Handling classical PS2 mouse.\n");
-#endif
     for (;;) {
         u8 status = IO::in8(I8042_STATUS);
         if (!(((status & I8042_WHICH_BUFFER) == I8042_MOUSE_BUFFER) && (status & I8042_BUFFER_FULL)))
@@ -154,20 +103,17 @@ void PS2MouseDevice::handle_irq(RegisterState&)
         auto commit_packet = [&] {
             m_data_state = 0;
 #ifdef PS2MOUSE_DEBUG
-            dbgprintf("PS2Mouse: %d, %d %s %s (buffered: %u)\n",
-                m_data[1],
-                m_data[2],
-                (m_data[0] & 1) ? "Left" : "",
-                (m_data[0] & 2) ? "Right" : "",
-                m_queue.size());
+            dbg() << "PS2Mouse: " << m_data[1] << ", " << m_data[2] << " " << ((m_data[0] & 1) ? "Left" : "") << " " << ((m_data[0] & 2) ? "Right" : "") << " (buffered: " << m_queue.size() << ")";
 #endif
+            m_entropy_source.add_random_event(*(u32*)m_data);
+
             parse_data_packet();
         };
 
         switch (m_data_state) {
         case 0:
             if (!(data & 0x08)) {
-                dbgprintf("PS2Mouse: Stream out of sync.\n");
+                dbg() << "PS2Mouse: Stream out of sync.";
                 break;
             }
             ++m_data_state;
@@ -195,8 +141,15 @@ void PS2MouseDevice::parse_data_packet()
     int x = m_data[1];
     int y = m_data[2];
     int z = 0;
-    if (m_has_wheel)
-        z = (char)m_data[3];
+    if (m_has_wheel) {
+        // FIXME: For non-Intellimouse, this is a full byte.
+        //        However, for now, m_has_wheel is only set for Intellimouse.
+        z = (char)(m_data[3] & 0x0f);
+
+        // -1 in 4 bits
+        if (z == 15)
+            z = -1;
+    }
     bool x_overflow = m_data[0] & 0x40;
     bool y_overflow = m_data[0] & 0x80;
     bool x_sign = m_data[0] & 0x10;
@@ -214,10 +167,18 @@ void PS2MouseDevice::parse_data_packet()
     packet.y = y;
     packet.z = z;
     packet.buttons = m_data[0] & 0x07;
+
+    if (m_has_five_buttons) {
+        if (m_data[3] & 0x10)
+            packet.buttons |= MousePacket::BackButton;
+        if (m_data[3] & 0x20)
+            packet.buttons |= MousePacket::ForwardButton;
+    }
+
     packet.is_relative = true;
 #ifdef PS2MOUSE_DEBUG
-    dbgprintf("PS2 Relative Mouse: Buttons %x\n", packet.buttons);
-    dbgprintf("Mouse: X %d, Y %d, Z %d\n", packet.x, packet.y, packet.z);
+    dbg() << "PS2 Relative Mouse: Buttons " << String::format("%x", packet.buttons);
+    dbg() << "Mouse: X " << packet.x << ", Y " << packet.y << ", Z " << packet.z;
 #endif
     m_queue.enqueue(packet);
 }
@@ -251,7 +212,7 @@ void PS2MouseDevice::check_device_presence()
     u8 maybe_ack = mouse_read();
     if (maybe_ack == I8042_ACK) {
         m_device_present = true;
-        kprintf("PS2MouseDevice: Device detected\n");
+        klog() << "PS2MouseDevice: Device detected";
 
         // the mouse will send a packet of data, since that's what we asked
         // for. we don't care about the content.
@@ -260,8 +221,23 @@ void PS2MouseDevice::check_device_presence()
         mouse_read();
     } else {
         m_device_present = false;
-        kprintf("PS2MouseDevice: Device not detected\n");
+        klog() << "PS2MouseDevice: Device not detected";
     }
+}
+
+u8 PS2MouseDevice::get_device_id()
+{
+    mouse_write(PS2MOUSE_GET_DEVICE_ID);
+    expect_ack();
+    return mouse_read();
+}
+
+void PS2MouseDevice::set_sample_rate(u8 rate)
+{
+    mouse_write(PS2MOUSE_SET_SAMPLE_RATE);
+    expect_ack();
+    mouse_write(rate);
+    expect_ack();
 }
 
 void PS2MouseDevice::initialize_device()
@@ -286,35 +262,34 @@ void PS2MouseDevice::initialize_device()
     mouse_write(PS2MOUSE_ENABLE_PACKET_STREAMING);
     expect_ack();
 
-    mouse_write(PS2MOUSE_GET_DEVICE_ID);
-    expect_ack();
-    u8 device_id = mouse_read();
+    u8 device_id = get_device_id();
 
     if (device_id != PS2MOUSE_INTELLIMOUSE_ID) {
         // Send magical wheel initiation sequence.
-        mouse_write(PS2MOUSE_SET_SAMPLE_RATE);
-        expect_ack();
-        mouse_write(200);
-        expect_ack();
-        mouse_write(PS2MOUSE_SET_SAMPLE_RATE);
-        expect_ack();
-        mouse_write(100);
-        expect_ack();
-        mouse_write(PS2MOUSE_SET_SAMPLE_RATE);
-        expect_ack();
-        mouse_write(80);
-        expect_ack();
-
-        mouse_write(PS2MOUSE_GET_DEVICE_ID);
-        expect_ack();
-        device_id = mouse_read();
+        set_sample_rate(200);
+        set_sample_rate(100);
+        set_sample_rate(80);
+        device_id = get_device_id();
     }
 
     if (device_id == PS2MOUSE_INTELLIMOUSE_ID) {
         m_has_wheel = true;
-        kprintf("PS2MouseDevice: Mouse wheel enabled!\n");
+        klog() << "PS2MouseDevice: Mouse wheel enabled!";
     } else {
-        kprintf("PS2MouseDevice: No mouse wheel detected!\n");
+        klog() << "PS2MouseDevice: No mouse wheel detected!";
+    }
+
+    if (device_id == PS2MOUSE_INTELLIMOUSE_ID) {
+        // Try to enable 5 buttons as well!
+        set_sample_rate(200);
+        set_sample_rate(200);
+        set_sample_rate(80);
+        device_id = get_device_id();
+    }
+
+    if (device_id == PS2MOUSE_INTELLIMOUSE_EXPLORER_ID) {
+        m_has_five_buttons = true;
+        klog() << "PS2MouseDevice: 5 buttons enabled!";
     }
 
     enable_irq();
@@ -356,12 +331,12 @@ u8 PS2MouseDevice::mouse_read()
     return IO::in8(I8042_BUFFER);
 }
 
-bool PS2MouseDevice::can_read(const FileDescription&) const
+bool PS2MouseDevice::can_read(const FileDescription&, size_t) const
 {
     return !m_queue.is_empty();
 }
 
-ssize_t PS2MouseDevice::read(FileDescription&, u8* buffer, ssize_t size)
+KResultOr<size_t> PS2MouseDevice::read(FileDescription&, size_t, UserOrKernelBuffer& buffer, size_t size)
 {
     ASSERT(size > 0);
     size_t nread = 0;
@@ -369,19 +344,20 @@ ssize_t PS2MouseDevice::read(FileDescription&, u8* buffer, ssize_t size)
     while (!m_queue.is_empty() && remaining_space_in_buffer) {
         auto packet = m_queue.dequeue();
 #ifdef PS2MOUSE_DEBUG
-        dbgprintf("PS2 Mouse Read: Buttons %x\n", packet.buttons);
-        dbgprintf("PS2 Mouse Read: X %d, Y %d, Z %d, Relative %d\n", packet.x, packet.y, packet.z, packet.buttons);
-        dbgprintf("PS2 Mouse Read: Filter packets\n");
+        dbg() << "PS2 Mouse Read: Buttons " << String::format("%x", packet.buttons);
+        dbg() << "PS2 Mouse: X " << packet.x << ", Y " << packet.y << ", Z " << packet.z << " Relative " << packet.buttons;
+        dbg() << "PS2 Mouse Read: Filter packets";
 #endif
         size_t bytes_read_from_packet = min(remaining_space_in_buffer, sizeof(MousePacket));
-        memcpy(buffer + nread, &packet, bytes_read_from_packet);
+        if (!buffer.write(&packet, nread, bytes_read_from_packet))
+            return KResult(-EFAULT);
         nread += bytes_read_from_packet;
         remaining_space_in_buffer -= bytes_read_from_packet;
     }
     return nread;
 }
 
-ssize_t PS2MouseDevice::write(FileDescription&, const u8*, ssize_t)
+KResultOr<size_t> PS2MouseDevice::write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t)
 {
     return 0;
 }

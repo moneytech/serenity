@@ -30,6 +30,7 @@
 #include <LibCore/SyscallUtils.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -60,7 +61,7 @@ int IODevice::read(u8* buffer, int length)
     return read_buffer.size();
 }
 
-ByteBuffer IODevice::read(int max_size)
+ByteBuffer IODevice::read(size_t max_size)
 {
     if (m_fd < 0)
         return {};
@@ -68,8 +69,8 @@ ByteBuffer IODevice::read(int max_size)
         return {};
     auto buffer = ByteBuffer::create_uninitialized(max_size);
     auto* buffer_ptr = (char*)buffer.data();
-    int remaining_buffer_space = buffer.size();
-    int taken_from_buffered = 0;
+    size_t remaining_buffer_space = buffer.size();
+    size_t taken_from_buffered = 0;
     if (!m_buffered_data.is_empty()) {
         taken_from_buffered = min(remaining_buffer_space, m_buffered_data.size());
         memcpy(buffer_ptr, m_buffered_data.data(), taken_from_buffered);
@@ -104,7 +105,7 @@ ByteBuffer IODevice::read(int max_size)
 
 bool IODevice::can_read_from_fd() const
 {
-    // FIXME: Can we somehow remove this once CSocket is implemented using non-blocking sockets?
+    // FIXME: Can we somehow remove this once Core::Socket is implemented using non-blocking sockets?
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(m_fd, &rfds);
@@ -120,7 +121,7 @@ bool IODevice::can_read_from_fd() const
     return FD_ISSET(m_fd, &rfds);
 }
 
-bool IODevice::can_read_line()
+bool IODevice::can_read_line() const
 {
     if (m_eof && !m_buffered_data.is_empty())
         return true;
@@ -171,7 +172,7 @@ ByteBuffer IODevice::read_all()
     return ByteBuffer::copy(data.data(), data.size());
 }
 
-ByteBuffer IODevice::read_line(int max_size)
+ByteBuffer IODevice::read_line(size_t max_size)
 {
     if (m_fd < 0)
         return {};
@@ -181,7 +182,7 @@ ByteBuffer IODevice::read_line(int max_size)
         return {};
     if (m_eof) {
         if (m_buffered_data.size() > max_size) {
-            dbgprintf("IODevice::read_line: At EOF but there's more than max_size(%d) buffered\n", max_size);
+            dbgprintf("IODevice::read_line: At EOF but there's more than max_size(%zu) buffered\n", max_size);
             return {};
         }
         auto buffer = ByteBuffer::copy(m_buffered_data.data(), m_buffered_data.size());
@@ -189,7 +190,7 @@ ByteBuffer IODevice::read_line(int max_size)
         return buffer;
     }
     auto line = ByteBuffer::create_uninitialized(max_size + 1);
-    int line_index = 0;
+    size_t line_index = 0;
     while (line_index < max_size) {
         u8 ch = m_buffered_data[line_index];
         line[line_index++] = ch;
@@ -205,7 +206,7 @@ ByteBuffer IODevice::read_line(int max_size)
     return {};
 }
 
-bool IODevice::populate_read_buffer()
+bool IODevice::populate_read_buffer() const
 {
     if (m_fd < 0)
         return false;
@@ -262,6 +263,16 @@ bool IODevice::seek(i64 offset, SeekMode mode, off_t* pos)
     m_eof = false;
     if (pos)
         *pos = rc;
+    return true;
+}
+
+bool IODevice::truncate(off_t size)
+{
+    int rc = ftruncate(m_fd, size);
+    if (rc < 0) {
+        set_error(errno);
+        return false;
+    }
     return true;
 }
 

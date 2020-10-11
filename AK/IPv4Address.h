@@ -26,10 +26,11 @@
 
 #pragma once
 
+#include <AK/Endian.h>
 #include <AK/LogStream.h>
-#include <AK/NetworkOrdered.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
+#include <AK/StringView.h>
 #include <AK/Vector.h>
 
 typedef u32 in_addr_t;
@@ -39,7 +40,7 @@ namespace AK {
 class [[gnu::packed]] IPv4Address
 {
 public:
-    IPv4Address() {}
+    IPv4Address() { }
     IPv4Address(const u8 data[4])
     {
         m_data[0] = data[0];
@@ -67,7 +68,7 @@ public:
 
     String to_string() const
     {
-        return String::format("%u.%u.%u.%u", m_data[0], m_data[1], m_data[2], m_data[3]);
+        return String::formatted("{}.{}.{}.{}", m_data[0], m_data[1], m_data[2], m_data[3]);
     }
 
     static Optional<IPv4Address> from_string(const StringView& string)
@@ -75,20 +76,37 @@ public:
         if (string.is_null())
             return {};
         auto parts = string.split_view('.');
-        if (parts.size() != 4)
+
+        u32 a;
+        u32 b;
+        u32 c;
+        u32 d;
+
+        if (parts.size() == 1) {
+            a = 0;
+            b = 0;
+            c = 0;
+            d = parts[0].to_uint().value_or(256);
+        } else if (parts.size() == 2) {
+            a = parts[0].to_uint().value_or(256);
+            b = 0;
+            c = 0;
+            d = parts[1].to_uint().value_or(256);
+        } else if (parts.size() == 3) {
+            a = parts[0].to_uint().value_or(256);
+            b = parts[1].to_uint().value_or(256);
+            c = 0;
+            d = parts[2].to_uint().value_or(256);
+        } else if (parts.size() == 4) {
+            a = parts[0].to_uint().value_or(256);
+            b = parts[1].to_uint().value_or(256);
+            c = parts[2].to_uint().value_or(256);
+            d = parts[3].to_uint().value_or(256);
+        } else {
             return {};
-        bool ok;
-        auto a = parts[0].to_uint(ok);
-        if (!ok || a > 255)
-            return {};
-        auto b = parts[1].to_uint(ok);
-        if (!ok || b > 255)
-            return {};
-        auto c = parts[2].to_uint(ok);
-        if (!ok || c > 255)
-            return {};
-        auto d = parts[3].to_uint(ok);
-        if (!ok || d > 255)
+        }
+
+        if (a > 255 || b > 255 || c > 255 || d > 255)
             return {};
         return IPv4Address((u8)a, (u8)b, (u8)c, (u8)d);
     }

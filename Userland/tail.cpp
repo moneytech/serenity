@@ -36,7 +36,7 @@
 
 #define DEFAULT_LINE_COUNT 10
 
-int tail_from_pos(Core::File& file, off_t startline, bool want_follow)
+static int tail_from_pos(Core::File& file, off_t startline, bool want_follow)
 {
     if (!file.seek(startline + 1))
         return 1;
@@ -62,7 +62,7 @@ int tail_from_pos(Core::File& file, off_t startline, bool want_follow)
     return 0;
 }
 
-off_t find_seek_pos(Core::File& file, int wanted_lines)
+static off_t find_seek_pos(Core::File& file, int wanted_lines)
 {
     // Rather than reading the whole file, start at the end and work backwards,
     // stopping when we've found the number of lines we want.
@@ -75,7 +75,7 @@ off_t find_seek_pos(Core::File& file, int wanted_lines)
     off_t end = pos;
     int lines = 0;
 
-    // FIXME: Reading char-by-char is only OK if CIODevice's read buffer
+    // FIXME: Reading char-by-char is only OK if IODevice's read buffer
     // is smart enough to not read char-by-char. Fix it there, or fix it here :)
     for (; pos >= 0; pos--) {
         file.seek(pos);

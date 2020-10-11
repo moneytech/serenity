@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGUI/Button.h>
+#include <LibGUI/ControlBoxButton.h>
 #include <LibGUI/SpinBox.h>
 #include <LibGUI/TextBox.h>
 
@@ -35,22 +35,26 @@ SpinBox::SpinBox()
     m_editor = add<TextBox>();
     m_editor->set_text("0");
     m_editor->on_change = [this] {
-        bool ok;
-        int value = m_editor->text().to_uint(ok);
-        if (ok)
-            set_value(value);
+        auto value = m_editor->text().to_uint();
+        if (value.has_value())
+            set_value(value.value());
         else
             m_editor->set_text(String::number(m_value));
     };
-    m_increment_button = add<Button>();
+    m_editor->on_up_pressed = [this] {
+        set_value(m_value + 1);
+    };
+    m_editor->on_down_pressed = [this] {
+        set_value(m_value - 1);
+    };
+
+    m_increment_button = add<ControlBoxButton>(ControlBoxButton::UpArrow);
     m_increment_button->set_focusable(false);
-    m_increment_button->set_text("\xc3\xb6");
-    m_increment_button->on_click = [this](auto&) { set_value(m_value + 1); };
+    m_increment_button->on_click = [this](auto) { set_value(m_value + 1); };
     m_increment_button->set_auto_repeat_interval(150);
-    m_decrement_button = add<Button>();
+    m_decrement_button = add<ControlBoxButton>(ControlBoxButton::DownArrow);
     m_decrement_button->set_focusable(false);
-    m_decrement_button->set_text("\xc3\xb7");
-    m_decrement_button->on_click = [this](auto&) { set_value(m_value - 1); };
+    m_decrement_button->on_click = [this](auto) { set_value(m_value - 1); };
     m_decrement_button->set_auto_repeat_interval(150);
 }
 
@@ -81,24 +85,13 @@ void SpinBox::set_range(int min, int max)
 
     int old_value = m_value;
     m_value = clamp(m_value, m_min, m_max);
-    if (on_change && m_value != old_value)
-        on_change(m_value);
+    if (m_value != old_value) {
+        m_editor->set_text(String::number(m_value));
+        if (on_change)
+            on_change(m_value);
+    }
 
     update();
-}
-
-void SpinBox::keydown_event(KeyEvent& event)
-{
-    if (event.key() == KeyCode::Key_Up) {
-        set_value(m_value + 1);
-        return;
-    }
-    if (event.key() == KeyCode::Key_Down) {
-        set_value(m_value - 1);
-        return;
-    }
-
-    event.ignore();
 }
 
 void SpinBox::mousewheel_event(MouseEvent& event)

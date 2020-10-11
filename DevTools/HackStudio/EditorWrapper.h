@@ -26,7 +26,13 @@
 
 #pragma once
 
+#include "Debugger/BreakpointCallback.h"
+#include <AK/Function.h>
+#include <AK/Vector.h>
 #include <LibGUI/Widget.h>
+#include <string.h>
+
+namespace HackStudio {
 
 class Editor;
 
@@ -39,19 +45,20 @@ public:
     const Editor& editor() const { return *m_editor; }
 
     GUI::Label& filename_label() { return *m_filename_label; }
+    const GUI::Label& filename_label() const { return *m_filename_label; }
 
     void set_editor_has_focus(Badge<Editor>, bool);
 
 private:
-    explicit EditorWrapper();
+    EditorWrapper();
 
     RefPtr<GUI::Label> m_filename_label;
     RefPtr<GUI::Label> m_cursor_label;
     RefPtr<Editor> m_editor;
 };
 
-template<>
-inline bool Core::is<EditorWrapper>(const Core::Object& object)
-{
-    return !strcmp(object.class_name(), "EditorWrapper");
 }
+
+AK_BEGIN_TYPE_TRAITS(HackStudio::EditorWrapper)
+static bool is_type(const Core::Object& object) { return !strcmp(object.class_name(), "EditorWrapper"); }
+AK_END_TYPE_TRAITS()

@@ -31,21 +31,6 @@
 
 namespace Kernel {
 
-NonnullRefPtr<InodeVMObject> InodeVMObject::create_with_inode(Inode& inode)
-{
-    size_t size = inode.size();
-    if (inode.vmobject())
-        return *inode.vmobject();
-    auto vmobject = adopt(*new InodeVMObject(inode, size));
-    vmobject->inode().set_vmobject(*vmobject);
-    return vmobject;
-}
-
-NonnullRefPtr<VMObject> InodeVMObject::clone()
-{
-    return adopt(*new InodeVMObject(*this));
-}
-
 InodeVMObject::InodeVMObject(Inode& inode, size_t size)
     : VMObject(size)
     , m_inode(inode)
@@ -56,18 +41,20 @@ InodeVMObject::InodeVMObject(Inode& inode, size_t size)
 InodeVMObject::InodeVMObject(const InodeVMObject& other)
     : VMObject(other)
     , m_inode(other.m_inode)
+    , m_dirty_pages(page_count(), false)
 {
+    for (size_t i = 0; i < page_count(); ++i)
+        m_dirty_pages.set(i, other.m_dirty_pages.get(i));
 }
 
 InodeVMObject::~InodeVMObject()
 {
-    ASSERT(inode().vmobject() == this);
 }
 
 size_t InodeVMObject::amount_clean() const
 {
     size_t count = 0;
-    ASSERT(page_count() == (size_t)m_dirty_pages.size());
+    ASSERT(page_count() == m_dirty_pages.size());
     for (size_t i = 0; i < page_count(); ++i) {
         if (!m_dirty_pages.get(i) && m_physical_pages[i])
             ++count;
@@ -87,9 +74,7 @@ size_t InodeVMObject::amount_dirty() const
 
 void InodeVMObject::inode_size_changed(Badge<Inode>, size_t old_size, size_t new_size)
 {
-    dbgprintf("VMObject::inode_size_changed: {%u:%u} %u -> %u\n",
-        m_inode->fsid(), m_inode->index(),
-        old_size, new_size);
+    dbg() << "VMObject::inode_size_changed: {" << m_inode->fsid() << ":" << m_inode->index() << "} " << old_size << " -> " << new_size;
 
     InterruptDisabler disabler;
 
@@ -104,7 +89,7 @@ void InodeVMObject::inode_size_changed(Badge<Inode>, size_t old_size, size_t new
     });
 }
 
-void InodeVMObject::inode_contents_changed(Badge<Inode>, off_t offset, ssize_t size, const u8* data)
+void InodeVMObject::inode_contents_changed(Badge<Inode>, off_t offset, ssize_t size, const UserOrKernelBuffer& data)
 {
     (void)size;
     (void)data;

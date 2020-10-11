@@ -28,19 +28,52 @@
 #include <LibCore/Timer.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/JsonArrayModel.h>
+#include <LibGUI/Painter.h>
 #include <LibGUI/SortingProxyModel.h>
 #include <LibGUI/TableView.h>
+#include <LibGfx/Palette.h>
+
+class PagemapPaintingDelegate final : public GUI::TableCellPaintingDelegate {
+public:
+    virtual ~PagemapPaintingDelegate() override { }
+
+    virtual void paint(GUI::Painter& painter, const Gfx::IntRect& a_rect, const Gfx::Palette&, const GUI::ModelIndex& index) override
+    {
+        auto rect = a_rect.shrunken(2, 2);
+        auto pagemap = index.data(GUI::ModelRole::Custom).to_string();
+
+        float scale_factor = (float)pagemap.length() / (float)rect.width();
+
+        for (int i = 0; i < rect.width(); ++i) {
+            int x = rect.x() + i;
+            char c = pagemap[(float)i * scale_factor];
+            Color color;
+            if (c == 'N') // Null (no page at all, typically an inode-backed page that hasn't been paged in.)
+                color = Color::White;
+            else if (c == 'Z') // Zero (globally shared zero page, typically an untouched anonymous page.)
+                color = Color::from_rgb(0xc0c0ff);
+            else if (c == 'P') // Physical (a resident page)
+                color = Color::Black;
+            else
+                ASSERT_NOT_REACHED();
+
+            painter.draw_line({ x, rect.top() }, { x, rect.bottom() }, color);
+        }
+
+        painter.draw_rect(rect, Color::Black);
+    }
+};
 
 ProcessMemoryMapWidget::ProcessMemoryMapWidget()
 {
-    set_layout(make<GUI::VerticalBoxLayout>());
+    set_layout<GUI::VerticalBoxLayout>();
     layout()->set_margins({ 4, 4, 4, 4 });
     m_table_view = add<GUI::TableView>();
-    m_table_view->set_size_columns_to_fit_content(true);
     Vector<GUI::JsonArrayModel::FieldSpec> pid_vm_fields;
-    pid_vm_fields.empend("Address", Gfx::TextAlignment::CenterLeft, [](auto& object) {
-        return String::format("%#x", object.get("address").to_u32());
-    });
+    pid_vm_fields.empend(
+        "Address", Gfx::TextAlignment::CenterLeft,
+        [](auto& object) { return String::formatted("{:#x}", object.get("address").to_u32()); },
+        [](auto& object) { return object.get("address").to_u32(); });
     pid_vm_fields.empend("size", "Size", Gfx::TextAlignment::CenterRight);
     pid_vm_fields.empend("amount_resident", "Resident", Gfx::TextAlignment::CenterRight);
     pid_vm_fields.empend("amount_dirty", "Dirty", Gfx::TextAlignment::CenterRight);
@@ -60,6 +93,7 @@ ProcessMemoryMapWidget::ProcessMemoryMapWidget()
             builder.append('T');
         return builder.to_string();
     });
+    pid_vm_fields.empend("vmobject", "VMObject type", Gfx::TextAlignment::CenterLeft);
     pid_vm_fields.empend("Purgeable", Gfx::TextAlignment::CenterLeft, [](auto& object) {
         if (!object.get("purgeable").to_bool())
             return "";
@@ -67,11 +101,26 @@ ProcessMemoryMapWidget::ProcessMemoryMapWidget()
             return "Volatile";
         return "Non-volatile";
     });
+    pid_vm_fields.empend(
+        "Page map", Gfx::TextAlignment::CenterLeft,
+        [](auto&) {
+            return GUI::Variant();
+        },
+        [](auto&) {
+            return GUI::Variant(0);
+        },
+        [](const JsonObject& object) {
+            auto pagemap = object.get("pagemap").as_string_or({});
+            return pagemap;
+        });
     pid_vm_fields.empend("cow_pages", "# CoW", Gfx::TextAlignment::CenterRight);
     pid_vm_fields.empend("name", "Name", Gfx::TextAlignment::CenterLeft);
     m_json_model = GUI::JsonArrayModel::create({}, move(pid_vm_fields));
     m_table_view->set_model(GUI::SortingProxyModel::create(*m_json_model));
-    m_table_view->model()->set_key_column_and_sort_order(0, GUI::SortOrder::Ascending);
+
+    m_table_view->set_column_painting_delegate(7, make<PagemapPaintingDelegate>());
+
+    m_table_view->set_key_column_and_sort_order(0, GUI::SortOrder::Ascending);
     m_timer = add<Core::Timer>(1000, [this] { refresh(); });
 }
 
@@ -84,7 +133,7 @@ void ProcessMemoryMapWidget::set_pid(pid_t pid)
     if (m_pid == pid)
         return;
     m_pid = pid;
-    m_json_model->set_json_path(String::format("/proc/%d/vm", pid));
+    m_json_model->set_json_path(String::formatted("/proc/{}/vm", pid));
 }
 
 void ProcessMemoryMapWidget::refresh()

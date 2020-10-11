@@ -36,12 +36,12 @@
 
 struct Options {
     String data;
-    StringView type { "text" };
+    StringView type;
 };
 
-Options parse_options(int argc, char* argv[])
+static Options parse_options(int argc, char* argv[])
 {
-    const char* type = nullptr;
+    const char* type = "text/plain";
     Vector<const char*> text;
 
     Core::ArgsParser args_parser;
@@ -66,13 +66,7 @@ Options parse_options(int argc, char* argv[])
     } else {
         // Copy the rest of our command-line args.
         StringBuilder builder;
-        bool first = true;
-        for (auto& word : text) {
-            if (!first)
-                builder.append(' ');
-            first = false;
-            builder.append(word);
-        }
+        builder.join(' ', text);
         options.data = builder.to_string();
     }
 
@@ -81,12 +75,12 @@ Options parse_options(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     Options options = parse_options(argc, argv);
 
     auto& clipboard = GUI::Clipboard::the();
-    clipboard.set_data(options.data, options.type);
+    clipboard.set_data(options.data.bytes(), options.type);
 
     return 0;
 }

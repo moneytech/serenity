@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/JsonObject.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Widget.h>
 #include <LibGfx/Orientation.h>
@@ -36,6 +37,8 @@ namespace GUI {
 BoxLayout::BoxLayout(Orientation orientation)
     : m_orientation(orientation)
 {
+    register_property(
+        "orientation", [this] { return m_orientation == Gfx::Orientation::Vertical ? "Vertical" : "Horizontal"; }, nullptr);
 }
 
 void BoxLayout::run(Widget& widget)
@@ -50,7 +53,7 @@ void BoxLayout::run(Widget& widget)
     if (m_entries.is_empty())
         return;
 
-    Gfx::Size available_size = widget.size();
+    Gfx::IntSize available_size = widget.size();
     int number_of_entries_with_fixed_size = 0;
 
     int number_of_visible_entries = 0;
@@ -58,9 +61,9 @@ void BoxLayout::run(Widget& widget)
     if (should_log)
         dbgprintf("BoxLayout:  Starting with available size: %s\n", available_size.to_string().characters());
 
-    int last_entry_with_automatic_size = -1;
+    Optional<size_t> last_entry_with_automatic_size;
 
-    for (int i = 0; i < m_entries.size(); ++i) {
+    for (size_t i = 0; i < m_entries.size(); ++i) {
         auto& entry = m_entries[i];
         if (entry.type == Entry::Type::Spacer) {
             ++number_of_visible_entries;
@@ -98,8 +101,8 @@ void BoxLayout::run(Widget& widget)
     if (should_log)
         dbgprintf("BoxLayout:   available_size=%s, fixed=%d, fill=%d\n", available_size.to_string().characters(), number_of_entries_with_fixed_size, number_of_entries_with_automatic_size);
 
-    Gfx::Size automatic_size;
-    Gfx::Size automatic_size_for_last_entry;
+    Gfx::IntSize automatic_size;
+    Gfx::IntSize automatic_size_for_last_entry;
 
     if (number_of_entries_with_automatic_size) {
         if (m_orientation == Orientation::Horizontal) {
@@ -123,7 +126,7 @@ void BoxLayout::run(Widget& widget)
     int current_x = margins().left();
     int current_y = margins().top();
 
-    for (int i = 0; i < m_entries.size(); ++i) {
+    for (size_t i = 0; i < m_entries.size(); ++i) {
         auto& entry = m_entries[i];
         if (entry.type == Entry::Type::Spacer) {
             current_x += automatic_size.width();
@@ -134,14 +137,14 @@ void BoxLayout::run(Widget& widget)
             continue;
         if (!entry.widget->is_visible())
             continue;
-        Gfx::Rect rect(current_x, current_y, 0, 0);
+        Gfx::IntRect rect(current_x, current_y, 0, 0);
         if (entry.layout) {
             // FIXME: Implement recursive layout.
             ASSERT_NOT_REACHED();
         }
         ASSERT(entry.widget);
 
-        if (i == last_entry_with_automatic_size) {
+        if (last_entry_with_automatic_size.has_value() && i == last_entry_with_automatic_size.value()) {
             rect.set_size(automatic_size_for_last_entry);
         } else {
             rect.set_size(automatic_size);
@@ -173,5 +176,4 @@ void BoxLayout::run(Widget& widget)
             current_y += rect.height() + spacing();
     }
 }
-
 }

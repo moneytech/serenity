@@ -32,21 +32,26 @@
 class GlyphEditorWidget;
 class GlyphMapWidget;
 
-struct UI_FontEditorBottom;
-
 class FontEditorWidget final : public GUI::Widget {
     C_OBJECT(FontEditorWidget)
 public:
     virtual ~FontEditorWidget() override;
 
+    int preferred_width() { return m_preferred_width; }
+    int preferred_height() { return m_preferred_height; }
+
+    bool save_as(const String&);
+
+    const String& path() { return m_path; }
+
 private:
     FontEditorWidget(const String& path, RefPtr<Gfx::Font>&&);
     RefPtr<Gfx::Font> m_edited_font;
 
-    GlyphMapWidget* m_glyph_map_widget { nullptr };
-    GlyphEditorWidget* m_glyph_editor_widget { nullptr };
+    RefPtr<GlyphMapWidget> m_glyph_map_widget;
+    RefPtr<GlyphEditorWidget> m_glyph_editor_widget;
 
     String m_path;
-
-    OwnPtr<UI_FontEditorBottom> m_ui;
+    int m_preferred_width;
+    int m_preferred_height;
 };

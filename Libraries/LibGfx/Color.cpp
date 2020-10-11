@@ -25,18 +25,26 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/BufferStream.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
+#include <AK/Vector.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 namespace Gfx {
 
 Color::Color(NamedColor named)
 {
+    if (named == Transparent) {
+        m_value = 0;
+        return;
+    }
+
     struct {
         u8 r;
         u8 g;
@@ -117,7 +125,57 @@ Color::Color(NamedColor named)
 
 String Color::to_string() const
 {
-    return String::format("#%b%b%b%b", red(), green(), blue(), alpha());
+    return String::format("#%02x%02x%02x%02x", red(), green(), blue(), alpha());
+}
+
+String Color::to_string_without_alpha() const
+{
+    return String::format("#%02x%02x%02x", red(), green(), blue());
+}
+
+static Optional<Color> parse_rgb_color(const StringView& string)
+{
+    ASSERT(string.starts_with("rgb("));
+    ASSERT(string.ends_with(")"));
+
+    auto substring = string.substring_view(4, string.length() - 5);
+    auto parts = substring.split_view(',');
+
+    if (parts.size() != 3)
+        return {};
+
+    auto r = parts[0].to_uint().value_or(256);
+    auto g = parts[1].to_uint().value_or(256);
+    auto b = parts[2].to_uint().value_or(256);
+
+    if (r > 255 || g > 255 || b > 255)
+        return {};
+
+    return Color(r, g, b);
+}
+
+static Optional<Color> parse_rgba_color(const StringView& string)
+{
+    ASSERT(string.starts_with("rgba("));
+    ASSERT(string.ends_with(")"));
+
+    auto substring = string.substring_view(5, string.length() - 6);
+    auto parts = substring.split_view(',');
+
+    if (parts.size() != 4)
+        return {};
+
+    auto r = parts[0].to_int().value_or(256);
+    auto g = parts[1].to_int().value_or(256);
+    auto b = parts[2].to_int().value_or(256);
+
+    double alpha = strtod(parts[3].to_string().characters(), nullptr);
+    unsigned a = alpha * 255;
+
+    if (r > 255 || g > 255 || b > 255 || a > 255)
+        return {};
+
+    return Color(r, g, b, a);
 }
 
 Optional<Color> Color::from_string(const StringView& string)
@@ -126,11 +184,16 @@ Optional<Color> Color::from_string(const StringView& string)
         return {};
 
     struct ColorAndWebName {
+        constexpr ColorAndWebName(RGBA32 c, const char* n)
+            : color(c)
+            , name(n)
+        {
+        }
         RGBA32 color;
-        const char* name;
+        StringView name;
     };
 
-    const ColorAndWebName web_colors[] = {
+    constexpr ColorAndWebName web_colors[] = {
         // CSS Level 1
         { 0x000000, "black" },
         { 0xc0c0c0, "silver" },
@@ -215,7 +278,7 @@ Optional<Color> Color::from_string(const StringView& string)
         { 0xadd8e6, "lightblue" },
         { 0xf08080, "lightcoral" },
         { 0xe0ffff, "lightcyan" },
-        { 0xfafad2, "lightgoldenrody" },
+        { 0xfafad2, "lightgoldenrodyellow" },
         { 0xd3d3d3, "lightgray" },
         { 0x90ee90, "lightgreen" },
         { 0xd3d3d3, "lightgrey" },
@@ -230,13 +293,13 @@ Optional<Color> Color::from_string(const StringView& string)
         { 0x32cd32, "limegreen" },
         { 0xfaf0e6, "linen" },
         { 0xff00ff, "magenta" },
-        { 0x66cdaa, "mediumaquamarin" },
+        { 0x66cdaa, "mediumaquamarine" },
         { 0x0000cd, "mediumblue" },
         { 0xba55d3, "mediumorchid" },
         { 0x9370db, "mediumpurple" },
         { 0x3cb371, "mediumseagreen" },
         { 0x7b68ee, "mediumslateblue" },
-        { 0x00fa9a, "mediumspringgre" },
+        { 0x00fa9a, "mediumspringgreen" },
         { 0x48d1cc, "mediumturquoise" },
         { 0xc71585, "mediumvioletred" },
         { 0x191970, "midnightblue" },
@@ -287,10 +350,16 @@ Optional<Color> Color::from_string(const StringView& string)
         { 0x000000, nullptr }
     };
 
-    for (size_t i = 0; web_colors[i].name; ++i) {
+    for (size_t i = 0; !web_colors[i].name.is_null(); ++i) {
         if (string == web_colors[i].name)
             return Color::from_rgb(web_colors[i].color);
     }
+
+    if (string.starts_with("rgb(") && string.ends_with(")"))
+        return parse_rgb_color(string);
+
+    if (string.starts_with("rgba(") && string.ends_with(")"))
+        return parse_rgba_color(string);
 
     if (string[0] != '#')
         return {};
@@ -343,18 +412,23 @@ Optional<Color> Color::from_string(const StringView& string)
 
     return Color(r.value(), g.value(), b.value(), a.value());
 }
-}
 
 const LogStream& operator<<(const LogStream& stream, Color value)
 {
     return stream << value.to_string();
 }
+}
 
-bool IPC::decode(BufferStream& stream, Color& color)
+bool IPC::encode(IPC::Encoder& encoder, const Color& color)
 {
-    u32 rgba;
-    stream >> rgba;
-    if (stream.handle_read_failure())
+    encoder << color.value();
+    return true;
+}
+
+bool IPC::decode(IPC::Decoder& decoder, Color& color)
+{
+    u32 rgba = 0;
+    if (!decoder.decode(rgba))
         return false;
     color = Color::from_rgba(rgba);
     return true;

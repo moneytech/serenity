@@ -35,20 +35,21 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+namespace HackStudio {
+
 void TerminalWrapper::run_command(const String& command)
 {
     if (m_pid != -1) {
-        GUI::MessageBox::show(
+        GUI::MessageBox::show(window(),
             "A command is already running in this TerminalWrapper",
             "Can't run command",
-            GUI::MessageBox::Type::Error,
-            GUI::MessageBox::InputType::OK,
-            window());
+            GUI::MessageBox::Type::Error);
         return;
     }
 
@@ -75,11 +76,11 @@ void TerminalWrapper::run_command(const String& command)
             ASSERT_NOT_REACHED();
         }
         if (WIFEXITED(wstatus)) {
-            m_terminal_widget->inject_string(String::format("\033[%d;1m(Command exited with code %d)\033[0m\n", wstatus == 0 ? 32 : 31, WEXITSTATUS(wstatus)));
+            m_terminal_widget->inject_string(String::formatted("\033[{};1m(Command exited with code {})\033[0m\n", wstatus == 0 ? 32 : 31, WEXITSTATUS(wstatus)));
         } else if (WIFSTOPPED(wstatus)) {
-            m_terminal_widget->inject_string(String::format("\033[34;1m(Command stopped!)\033[0m\n"));
+            m_terminal_widget->inject_string("\033[34;1m(Command stopped!)\033[0m\n");
         } else if (WIFSIGNALED(wstatus)) {
-            m_terminal_widget->inject_string(String::format("\033[34;1m(Command signaled with %s!)\033[0m\n", strsignal(WTERMSIG(wstatus))));
+            m_terminal_widget->inject_string(String::formatted("\033[34;1m(Command signaled with {}!)\033[0m\n", strsignal(WTERMSIG(wstatus))));
         }
         m_process_state_widget->set_tty_fd(-1);
         m_pid = -1;
@@ -104,6 +105,8 @@ void TerminalWrapper::run_command(const String& command)
             perror("open");
             exit(1);
         }
+
+        tcsetpgrp(pts_fd, getpid());
 
         // NOTE: It's okay if this fails.
         (void)ioctl(0, TIOCNOTTY);
@@ -142,8 +145,8 @@ void TerminalWrapper::run_command(const String& command)
 
         auto parts = command.split(' ');
         ASSERT(!parts.is_empty());
-        const char** args = (const char**) calloc(parts.size() + 1, sizeof(const char*));
-        for (int i = 0; i < parts.size(); i++) {
+        const char** args = (const char**)calloc(parts.size() + 1, sizeof(const char*));
+        for (size_t i = 0; i < parts.size(); i++) {
             args[i] = parts[i].characters();
         }
         rc = execvp(args[0], const_cast<char**>(args));
@@ -166,15 +169,21 @@ void TerminalWrapper::kill_running_command()
     (void)killpg(m_pid, SIGTERM);
 }
 
-TerminalWrapper::TerminalWrapper()
+TerminalWrapper::TerminalWrapper(bool user_spawned)
+    : m_user_spawned(user_spawned)
 {
-    set_layout(make<GUI::VerticalBoxLayout>());
+    set_layout<GUI::VerticalBoxLayout>();
 
     RefPtr<Core::ConfigFile> config = Core::ConfigFile::get_for_app("Terminal");
     m_terminal_widget = add<TerminalWidget>(-1, false, config);
     m_process_state_widget = add<ProcessStateWidget>();
+
+    if (user_spawned)
+        run_command("Shell");
 }
 
 TerminalWrapper::~TerminalWrapper()
 {
+}
+
 }

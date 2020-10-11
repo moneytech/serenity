@@ -27,13 +27,13 @@
 #pragma once
 
 #include <AK/Traits.h>
-#include <Kernel/KeyCode.h>
+#include <Kernel/API/KeyCode.h>
 
 namespace GUI {
 
 class Shortcut {
 public:
-    Shortcut() {}
+    Shortcut() { }
     Shortcut(u8 modifiers, KeyCode key)
         : m_modifiers(modifiers)
         , m_key(key)

@@ -29,7 +29,7 @@
 
 #include <LibGUI/Frame.h>
 
-class AudioEngine;
+class TrackManager;
 class MainWidget;
 
 class KnobsWidget final : public GUI::Frame {
@@ -40,9 +40,9 @@ public:
     void update_knobs();
 
 private:
-    KnobsWidget(AudioEngine&, MainWidget&);
+    KnobsWidget(TrackManager&, MainWidget&);
 
-    AudioEngine& m_audio_engine;
+    TrackManager& m_track_manager;
     MainWidget& m_main_widget;
 
     RefPtr<GUI::Widget> m_labels_container;
@@ -72,5 +72,5 @@ private:
     RefPtr<GUI::Slider> m_release_knob;
     RefPtr<GUI::Slider> m_delay_knob;
 
-    bool m_change_octave { true };
+    bool m_change_underlying { true };
 };

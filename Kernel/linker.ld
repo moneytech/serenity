@@ -8,7 +8,7 @@ SECTIONS
 
     .text ALIGN(4K) : AT (ADDR(.text) - 0xc0000000)
     {
-        Arch/i386/Boot/boot.ao
+        $<TARGET_OBJECTS:boot>
         *(.multiboot)
         start_of_kernel_text = .;
         *(.text)
@@ -18,6 +18,10 @@ SECTIONS
 
     .rodata ALIGN(4K) : AT (ADDR(.rodata) - 0xc0000000)
     {
+        start_heap_ctors = .;
+        *libkernel_heap.a:*(.ctors)
+        end_heap_ctors = .;
+
         start_ctors = .;
         *(.ctors)
         end_ctors = .;

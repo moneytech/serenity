@@ -27,10 +27,10 @@
 #pragma once
 
 #include "IRCLogBuffer.h"
-#include <AK/String.h>
 #include <AK/CircularQueue.h>
-#include <AK/RefPtr.h>
 #include <AK/RefCounted.h>
+#include <AK/RefPtr.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 
 class IRCClient;
@@ -43,8 +43,7 @@ public:
 
     String name() const { return m_name; }
     void add_message(char prefix, const String& name, const String& text, Color = Color::Black);
-
-    void dump() const;
+    void add_message(const String& text, Color = Color::Black);
 
     const IRCLogBuffer& log() const { return *m_log; }
     IRCLogBuffer& log() { return *m_log; }
@@ -57,7 +56,7 @@ public:
 private:
     IRCQuery(IRCClient&, const String& name);
 
-    IRCClient& m_client;
+    NonnullRefPtr<IRCClient> m_client;
     String m_name;
     RefPtr<IRCWindow> m_window;
 

@@ -24,7 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/LogStream.h>
 #include <assert.h>
+#include <sys/resource.h>
 #include <ulimit.h>
 
 extern "C" {
@@ -34,6 +36,14 @@ long ulimit(int cmd, long newlimit)
     (void)cmd;
     (void)newlimit;
     ASSERT_NOT_REACHED();
+    return -1;
+}
+
+int getrusage(int who, struct rusage* usage)
+{
+    (void)who;
+    (void)usage;
+    dbg() << "LibC: getrusage is not implemented";
     return -1;
 }
 }

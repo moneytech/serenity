@@ -25,7 +25,6 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <Kernel/KeyCode.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Button.h>
@@ -58,16 +57,20 @@ void Button::paint_event(PaintEvent& event)
         return;
 
     auto content_rect = rect().shrunken(8, 2);
-    auto icon_location = m_icon ? content_rect.center().translated(-(m_icon->width() / 2), -(m_icon->height() / 2)) : Gfx::Point();
+    auto icon_location = m_icon ? content_rect.center().translated(-(m_icon->width() / 2), -(m_icon->height() / 2)) : Gfx::IntPoint();
     if (m_icon && !text().is_empty())
         icon_location.set_x(content_rect.x());
     if (is_being_pressed() || is_checked())
         painter.translate(1, 1);
     if (m_icon) {
-        if (is_enabled())
-            painter.blit(icon_location, *m_icon, m_icon->rect());
-        else
+        if (is_enabled()) {
+            if (is_hovered())
+                painter.blit_brightened(icon_location, *m_icon, m_icon->rect());
+            else
+                painter.blit(icon_location, *m_icon, m_icon->rect());
+        } else {
             painter.blit_dimmed(icon_location, *m_icon, m_icon->rect());
+        }
     }
     auto& font = is_checked() ? Gfx::Font::default_bold_font() : this->font();
     if (m_icon && !text().is_empty()) {
@@ -75,14 +78,14 @@ void Button::paint_event(PaintEvent& event)
         content_rect.set_width(content_rect.width() - m_icon->width() - 4);
     }
 
-    Gfx::Rect text_rect { 0, 0, font.width(text()), font.glyph_height() };
+    Gfx::IntRect text_rect { 0, 0, font.width(text()), font.glyph_height() };
     if (text_rect.width() > content_rect.width())
         text_rect.set_width(content_rect.width());
     text_rect.align_within(content_rect, text_alignment());
     paint_text(painter, text_rect, font, text_alignment());
 }
 
-void Button::click()
+void Button::click(unsigned modifiers)
 {
     if (!is_enabled())
         return;
@@ -92,9 +95,17 @@ void Button::click()
         set_checked(!is_checked());
     }
     if (on_click)
-        on_click(*this);
+        on_click(modifiers);
     if (m_action)
         m_action->activate(this);
+}
+
+void Button::context_menu_event(ContextMenuEvent& context_menu_event)
+{
+    if (!is_enabled())
+        return;
+    if (on_context_menu_request)
+        on_context_menu_request(context_menu_event);
 }
 
 void Button::set_action(Action& action)

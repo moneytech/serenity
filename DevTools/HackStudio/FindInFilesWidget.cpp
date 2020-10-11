@@ -25,6 +25,7 @@
  */
 
 #include "FindInFilesWidget.h"
+#include "HackStudio.h"
 #include "Project.h"
 #include <AK/StringBuilder.h>
 #include <LibGUI/BoxLayout.h>
@@ -32,9 +33,7 @@
 #include <LibGUI/TableView.h>
 #include <LibGUI/TextBox.h>
 
-extern GUI::TextEditor& current_editor();
-extern void open_file(const String&);
-extern OwnPtr<Project> g_project;
+namespace HackStudio {
 
 struct Match {
     String filename;
@@ -73,9 +72,16 @@ public:
         }
     }
 
-    virtual GUI::Variant data(const GUI::ModelIndex& index, Role role = Role::Display) const override
+    virtual GUI::Variant data(const GUI::ModelIndex& index, GUI::ModelRole role) const override
     {
-        if (role == Role::Display) {
+        if (role == GUI::ModelRole::TextAlignment)
+            return Gfx::TextAlignment::CenterLeft;
+        if (role == GUI::ModelRole::Font) {
+            if (index.column() == Column::MatchedText)
+                return Gfx::Font::default_fixed_width_font();
+            return {};
+        }
+        if (role == GUI::ModelRole::Display) {
             auto& match = m_matches.at(index.row());
             switch (index.column()) {
             case Column::Filename:
@@ -89,15 +95,7 @@ public:
         return {};
     }
 
-    virtual ColumnMetadata column_metadata(int column) const override
-    {
-        if (column == Column::MatchedText) {
-            return { 0, Gfx::TextAlignment::CenterLeft, &Gfx::Font::default_fixed_width_font() };
-        }
-        return {};
-    }
-
-    virtual void update() override {}
+    virtual void update() override { }
     virtual GUI::ModelIndex index(int row, int column = 0, const GUI::ModelIndex& = GUI::ModelIndex()) const override { return create_index(row, column, &m_matches.at(row)); }
 
 private:
@@ -107,7 +105,7 @@ private:
 static RefPtr<SearchResultsModel> find_in_files(const StringView& text)
 {
     Vector<Match> matches;
-    g_project->for_each_text_file([&](auto& file) {
+    project().for_each_text_file([&](auto& file) {
         auto matches_in_file = file.document().find_all(text);
         for (auto& range : matches_in_file) {
             auto whole_line_range = file.document().range_for_entire_line(range.start().line());
@@ -129,16 +127,21 @@ static RefPtr<SearchResultsModel> find_in_files(const StringView& text)
 
 FindInFilesWidget::FindInFilesWidget()
 {
-    set_layout(make<GUI::VerticalBoxLayout>());
-    m_textbox = add<GUI::TextBox>();
-    m_textbox->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    m_textbox->set_preferred_size(0, 20);
-    m_button = add<GUI::Button>("Find in files");
-    m_button->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    m_button->set_preferred_size(0, 20);
+    set_layout<GUI::VerticalBoxLayout>();
+
+    auto& top_container = add<Widget>();
+    top_container.set_layout<GUI::HorizontalBoxLayout>();
+    top_container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+    top_container.set_preferred_size(0, 20);
+
+    m_textbox = top_container.add<GUI::TextBox>();
+    m_textbox->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+
+    m_button = top_container.add<GUI::Button>("Find in files");
+    m_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
+    m_button->set_preferred_size(100, 0);
 
     m_result_view = add<GUI::TableView>();
-    m_result_view->set_size_columns_to_fit_content(true);
 
     m_result_view->on_activation = [](auto& index) {
         auto& match = *(const Match*)index.internal_data();
@@ -147,7 +150,7 @@ FindInFilesWidget::FindInFilesWidget()
         current_editor().set_focus(true);
     };
 
-    m_button->on_click = [this](auto&) {
+    m_button->on_click = [this](auto) {
         auto results_model = find_in_files(m_textbox->text());
         m_result_view->set_model(results_model);
     };
@@ -160,4 +163,6 @@ void FindInFilesWidget::focus_textbox_and_select_all()
 {
     m_textbox->select_all();
     m_textbox->set_focus(true);
+}
+
 }

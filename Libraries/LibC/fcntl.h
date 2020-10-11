@@ -36,6 +36,7 @@ __BEGIN_DECLS
 #define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
+#define F_ISTTY 5
 
 #define FD_CLOEXEC 1
 
@@ -96,7 +97,7 @@ int watch_file(const char* path, size_t path_length);
 #define F_RDLCK 0
 #define F_WRLCK 1
 #define F_UNLCK 2
-
+#define F_SETLK 6
 #define F_SETLKW 7
 
 struct flock {

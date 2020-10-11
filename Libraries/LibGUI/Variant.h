@@ -27,9 +27,9 @@
 #pragma once
 
 #include <AK/String.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/Bitmap.h>
 #include <LibGUI/Icon.h>
+#include <LibGfx/Bitmap.h>
+#include <LibGfx/Font.h>
 
 namespace GUI {
 
@@ -43,12 +43,14 @@ public:
     Variant(unsigned);
     Variant(const char*);
     Variant(const String&);
+    Variant(const FlyString&);
     Variant(const Gfx::Bitmap&);
-    Variant(const GIcon&);
-    Variant(const Gfx::Point&);
-    Variant(const Gfx::Size&);
-    Variant(const Gfx::Rect&);
+    Variant(const GUI::Icon&);
+    Variant(const Gfx::IntPoint&);
+    Variant(const Gfx::IntSize&);
+    Variant(const Gfx::IntRect&);
     Variant(const Gfx::Font&);
+    Variant(const Gfx::TextAlignment);
     Variant(const AK::JsonValue&);
     Variant(Color);
 
@@ -76,6 +78,7 @@ public:
         Size,
         Rect,
         Font,
+        TextAlignment,
     };
 
     bool is_valid() const { return m_type != Type::Invalid; }
@@ -92,6 +95,7 @@ public:
     bool is_size() const { return m_type == Type::Size; }
     bool is_rect() const { return m_type == Type::Rect; }
     bool is_font() const { return m_type == Type::Font; }
+    bool is_text_alignment() const { return m_type == Type::TextAlignment; }
     Type type() const { return m_type; }
 
     bool as_bool() const
@@ -154,13 +158,8 @@ public:
             ASSERT(as_uint() <= INT32_MAX);
             return (int)as_uint();
         }
-        if (is_string()) {
-            bool ok;
-            int value = as_string().to_int(ok);
-            if (!ok)
-                return 0;
-            return value;
-        }
+        if (is_string())
+            return as_string().to_int().value_or(0);
         return 0;
     }
 
@@ -180,17 +179,17 @@ public:
         return m_value.as_float;
     }
 
-    Gfx::Point as_point() const
+    Gfx::IntPoint as_point() const
     {
         return { m_value.as_point.x, m_value.as_point.y };
     }
 
-    Gfx::Size as_size() const
+    Gfx::IntSize as_size() const
     {
         return { m_value.as_size.width, m_value.as_size.height };
     }
 
-    Gfx::Rect as_rect() const
+    Gfx::IntRect as_rect() const
     {
         return { as_point(), as_size() };
     }
@@ -207,10 +206,10 @@ public:
         return *m_value.as_bitmap;
     }
 
-    GIcon as_icon() const
+    GUI::Icon as_icon() const
     {
         ASSERT(type() == Type::Icon);
-        return GIcon(*m_value.as_icon);
+        return GUI::Icon(*m_value.as_icon);
     }
 
     Color as_color() const
@@ -223,6 +222,13 @@ public:
     {
         ASSERT(type() == Type::Font);
         return *m_value.as_font;
+    }
+
+    Gfx::TextAlignment to_text_alignment(Gfx::TextAlignment default_value) const
+    {
+        if (type() != Type::TextAlignment)
+            return default_value;
+        return m_value.as_text_alignment;
     }
 
     Color to_color(Color default_value = {}) const
@@ -263,7 +269,7 @@ private:
     union {
         StringImpl* as_string;
         Gfx::Bitmap* as_bitmap;
-        GIconImpl* as_icon;
+        GUI::IconImpl* as_icon;
         Gfx::Font* as_font;
         bool as_bool;
         i32 as_i32;
@@ -271,6 +277,7 @@ private:
         unsigned as_uint;
         float as_float;
         Gfx::RGBA32 as_color;
+        Gfx::TextAlignment as_text_alignment;
         RawPoint as_point;
         RawSize as_size;
         RawRect as_rect;

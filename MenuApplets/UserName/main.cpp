@@ -41,7 +41,7 @@ public:
         m_username_width = Gfx::Font::default_bold_font().width(m_username);
     }
 
-    virtual ~UserNameWidget() override {}
+    virtual ~UserNameWidget() override { }
 
     int get_width()
     {
@@ -86,16 +86,14 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     auto window = GUI::Window::construct();
     window->set_title("UserName");
     window->set_window_type(GUI::WindowType::MenuApplet);
 
-    auto widget = UserNameWidget::construct();
-
-    window->resize(widget->get_width(), 16);
-    window->set_main_widget(widget);
+    auto& widget = window->set_main_widget<UserNameWidget>();
+    window->resize(widget.get_width(), 16);
     window->show();
 
     if (pledge("stdio shared_buffer rpath", nullptr) < 0) {
@@ -103,5 +101,5 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    return app.exec();
+    return app->exec();
 }

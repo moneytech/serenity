@@ -24,11 +24,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <errno.h>
 #include <serenity.h>
 
 extern "C" {
+
+int disown(pid_t pid)
+{
+    int rc = syscall(SC_disown, pid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
 
 int module_load(const char* path, size_t path_length)
 {
@@ -54,13 +60,13 @@ int profiling_disable(pid_t pid)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-int set_thread_boost(int tid, int amount)
+int set_thread_boost(pid_t tid, int amount)
 {
     int rc = syscall(SC_set_thread_boost, tid, amount);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-int set_process_boost(int tid, int amount)
+int set_process_boost(pid_t tid, int amount)
 {
     int rc = syscall(SC_set_process_boost, tid, amount);
     __RETURN_WITH_ERRNO(rc, rc, -1);
@@ -79,9 +85,55 @@ int purge(int mode)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-int perf_event(int type, uintptr_t arg1, uintptr_t arg2)
+int perf_event(int type, uintptr_t arg1, FlatPtr arg2)
 {
     int rc = syscall(SC_perf_event, type, arg1, arg2);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+void* shbuf_get(int shbuf_id, size_t* size)
+{
+    int rc = syscall(SC_shbuf_get, shbuf_id, size);
+    if (rc < 0 && -rc < EMAXERRNO) {
+        errno = -rc;
+        return (void*)-1;
+    }
+    return (void*)rc;
+}
+
+int shbuf_release(int shbuf_id)
+{
+    int rc = syscall(SC_shbuf_release, shbuf_id);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int shbuf_seal(int shbuf_id)
+{
+    int rc = syscall(SC_shbuf_seal, shbuf_id);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int shbuf_create(int size, void** buffer)
+{
+    int rc = syscall(SC_shbuf_create, size, buffer);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int shbuf_allow_pid(int shbuf_id, pid_t peer_pid)
+{
+    int rc = syscall(SC_shbuf_allow_pid, shbuf_id, peer_pid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int shbuf_allow_all(int shbuf_id)
+{
+    int rc = syscall(SC_shbuf_allow_all, shbuf_id);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int get_stack_bounds(uintptr_t* user_stack_base, size_t* user_stack_size)
+{
+    int rc = syscall(SC_get_stack_bounds, user_stack_base, user_stack_size);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 }

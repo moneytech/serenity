@@ -28,12 +28,15 @@
 
 #include <AK/Assertions.h>
 #include <AK/StdLibExtras.h>
+#include <AK/Traits.h>
+#include <AK/Types.h>
 
 namespace AK {
 
 template<typename ListType, typename ElementType>
 class SinglyLinkedListIterator {
 public:
+    SinglyLinkedListIterator() { }
     bool operator!=(const SinglyLinkedListIterator& other) const { return m_node != other.m_node; }
     SinglyLinkedListIterator& operator++()
     {
@@ -44,7 +47,7 @@ public:
     ElementType& operator*() { return m_node->value; }
     ElementType* operator->() { return &m_node->value; }
     bool is_end() const { return !m_node; }
-    static SinglyLinkedListIterator universal_end() { return SinglyLinkedListIterator(nullptr); }
+    bool is_begin() const { return !m_prev; }
 
 private:
     friend ListType;
@@ -74,7 +77,7 @@ private:
     };
 
 public:
-    SinglyLinkedList() {}
+    SinglyLinkedList() { }
     ~SinglyLinkedList() { clear(); }
 
     bool is_empty() const { return !head(); }
@@ -150,22 +153,18 @@ public:
 
     bool contains_slow(const T& value) const
     {
-        for (auto* node = m_head; node; node = node->next) {
-            if (node->value == value)
-                return true;
-        }
-        return false;
+        return find(value) != end();
     }
 
     using Iterator = SinglyLinkedListIterator<SinglyLinkedList, T>;
     friend Iterator;
     Iterator begin() { return Iterator(m_head); }
-    Iterator end() { return Iterator::universal_end(); }
+    Iterator end() { return {}; }
 
     using ConstIterator = SinglyLinkedListIterator<const SinglyLinkedList, const T>;
     friend ConstIterator;
     ConstIterator begin() const { return ConstIterator(m_head); }
-    ConstIterator end() const { return ConstIterator::universal_end(); }
+    ConstIterator end() const { return {}; }
 
     template<typename Finder>
     ConstIterator find(Finder finder) const
@@ -193,12 +192,12 @@ public:
 
     ConstIterator find(const T& value) const
     {
-        return find([&](auto& other) { return value == other; });
+        return find([&](auto& other) { return Traits<T>::equals(value, other); });
     }
 
     Iterator find(const T& value)
     {
-        return find([&](auto& other) { return value == other; });
+        return find([&](auto& other) { return Traits<T>::equals(value, other); });
     }
 
     void remove(Iterator iterator)

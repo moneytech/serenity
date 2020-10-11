@@ -29,11 +29,15 @@
 #include <AK/NonnullOwnPtrVector.h>
 #include <LibCore/LocalSocket.h>
 
+namespace Inspector {
+
 class RemoteObjectGraphModel;
 class RemoteObject;
 
 class RemoteProcess {
 public:
+    static RemoteProcess& the();
+
     explicit RemoteProcess(pid_t);
     void update();
 
@@ -42,6 +46,10 @@ public:
 
     RemoteObjectGraphModel& object_graph_model() { return *m_object_graph_model; }
     const NonnullOwnPtrVector<RemoteObject>& roots() const { return m_roots; }
+
+    void set_inspected_object(FlatPtr);
+
+    void set_property(FlatPtr object, const StringView& name, const JsonValue& value);
 
     Function<void()> on_update;
 
@@ -57,3 +65,5 @@ private:
     RefPtr<Core::LocalSocket> m_socket;
     NonnullOwnPtrVector<RemoteObject> m_roots;
 };
+
+}

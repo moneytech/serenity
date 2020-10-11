@@ -1,0 +1,4 @@
+add_subdirectory(HackStudio)
+add_subdirectory(Inspector)
+add_subdirectory(Profiler)
+add_subdirectory(UserspaceEmulator)

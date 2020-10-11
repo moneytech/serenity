@@ -26,11 +26,14 @@
 
 #pragma once
 
-#include <Kernel/KeyCode.h>
+#include <AK/StringBuilder.h>
+#include <AK/Vector.h>
+#include <Kernel/API/KeyCode.h>
 #include <LibCore/Event.h>
+#include <LibGUI/FocusSource.h>
+#include <LibGUI/WindowType.h>
 #include <LibGfx/Point.h>
 #include <LibGfx/Rect.h>
-#include <LibGUI/WindowType.h>
 
 namespace GUI {
 
@@ -55,6 +58,8 @@ public:
         WindowLeft,
         WindowBecameInactive,
         WindowBecameActive,
+        WindowInputEntered,
+        WindowInputLeft,
         FocusIn,
         FocusOut,
         WindowCloseRequest,
@@ -62,6 +67,7 @@ public:
         EnabledChange,
         DragMove,
         Drop,
+        ThemeChange,
 
         __Begin_WM_Events,
         WM_WindowRemoved,
@@ -71,12 +77,12 @@ public:
         __End_WM_Events,
     };
 
-    Event() {}
+    Event() { }
     explicit Event(Type type)
         : Core::Event(type)
     {
     }
-    virtual ~Event() {}
+    virtual ~Event() { }
 
     bool is_key_event() const { return type() == KeyUp || type() == KeyDown; }
     bool is_paint_event() const { return type() == Paint; }
@@ -109,47 +115,62 @@ public:
 
 class WMWindowStateChangedEvent : public WMEvent {
 public:
-    WMWindowStateChangedEvent(int client_id, int window_id, const StringView& title, const Gfx::Rect& rect, bool is_active, WindowType window_type, bool is_minimized)
+    WMWindowStateChangedEvent(int client_id, int window_id, int parent_client_id, int parent_window_id, const StringView& title, const Gfx::IntRect& rect, bool is_active, bool is_modal, WindowType window_type, bool is_minimized, bool is_frameless, int progress)
         : WMEvent(Event::Type::WM_WindowStateChanged, client_id, window_id)
+        , m_parent_client_id(parent_client_id)
+        , m_parent_window_id(parent_window_id)
         , m_title(title)
         , m_rect(rect)
         , m_window_type(window_type)
         , m_active(is_active)
+        , m_modal(is_modal)
         , m_minimized(is_minimized)
+        , m_frameless(is_frameless)
+        , m_progress(progress)
     {
     }
 
-    String title() const { return m_title; }
-    Gfx::Rect rect() const { return m_rect; }
+    int parent_client_id() const { return m_parent_client_id; }
+    int parent_window_id() const { return m_parent_window_id; }
+    const String& title() const { return m_title; }
+    const Gfx::IntRect& rect() const { return m_rect; }
     bool is_active() const { return m_active; }
+    bool is_modal() const { return m_modal; }
     WindowType window_type() const { return m_window_type; }
     bool is_minimized() const { return m_minimized; }
+    bool is_frameless() const { return m_frameless; }
+    int progress() const { return m_progress; }
 
 private:
+    int m_parent_client_id;
+    int m_parent_window_id;
     String m_title;
-    Gfx::Rect m_rect;
+    Gfx::IntRect m_rect;
     WindowType m_window_type;
     bool m_active;
+    bool m_modal;
     bool m_minimized;
+    bool m_frameless;
+    int m_progress;
 };
 
 class WMWindowRectChangedEvent : public WMEvent {
 public:
-    WMWindowRectChangedEvent(int client_id, int window_id, const Gfx::Rect& rect)
+    WMWindowRectChangedEvent(int client_id, int window_id, const Gfx::IntRect& rect)
         : WMEvent(Event::Type::WM_WindowRectChanged, client_id, window_id)
         , m_rect(rect)
     {
     }
 
-    Gfx::Rect rect() const { return m_rect; }
+    const Gfx::IntRect& rect() const { return m_rect; }
 
 private:
-    Gfx::Rect m_rect;
+    Gfx::IntRect m_rect;
 };
 
 class WMWindowIconBitmapChangedEvent : public WMEvent {
 public:
-    WMWindowIconBitmapChangedEvent(int client_id, int window_id, int icon_buffer_id, const Gfx::Size& icon_size)
+    WMWindowIconBitmapChangedEvent(int client_id, int window_id, int icon_buffer_id, const Gfx::IntSize& icon_size)
         : WMEvent(Event::Type::WM_WindowIconBitmapChanged, client_id, window_id)
         , m_icon_buffer_id(icon_buffer_id)
         , m_icon_size(icon_size)
@@ -157,79 +178,76 @@ public:
     }
 
     int icon_buffer_id() const { return m_icon_buffer_id; }
-    const Gfx::Size& icon_size() const { return m_icon_size; }
+    const Gfx::IntSize& icon_size() const { return m_icon_size; }
 
 private:
     int m_icon_buffer_id;
-    Gfx::Size m_icon_size;
+    Gfx::IntSize m_icon_size;
 };
 
 class MultiPaintEvent final : public Event {
 public:
-    explicit MultiPaintEvent(const Vector<Gfx::Rect, 32>& rects, const Gfx::Size& window_size)
+    explicit MultiPaintEvent(const Vector<Gfx::IntRect, 32>& rects, const Gfx::IntSize& window_size)
         : Event(Event::MultiPaint)
         , m_rects(rects)
         , m_window_size(window_size)
     {
     }
 
-    const Vector<Gfx::Rect, 32>& rects() const { return m_rects; }
-    Gfx::Size window_size() const { return m_window_size; }
+    const Vector<Gfx::IntRect, 32>& rects() const { return m_rects; }
+    const Gfx::IntSize& window_size() const { return m_window_size; }
 
 private:
-    Vector<Gfx::Rect, 32> m_rects;
-    Gfx::Size m_window_size;
+    Vector<Gfx::IntRect, 32> m_rects;
+    Gfx::IntSize m_window_size;
 };
 
 class PaintEvent final : public Event {
 public:
-    explicit PaintEvent(const Gfx::Rect& rect, const Gfx::Size& window_size = {})
+    explicit PaintEvent(const Gfx::IntRect& rect, const Gfx::IntSize& window_size = {})
         : Event(Event::Paint)
         , m_rect(rect)
         , m_window_size(window_size)
     {
     }
 
-    Gfx::Rect rect() const { return m_rect; }
-    Gfx::Size window_size() const { return m_window_size; }
+    const Gfx::IntRect& rect() const { return m_rect; }
+    const Gfx::IntSize& window_size() const { return m_window_size; }
 
 private:
-    Gfx::Rect m_rect;
-    Gfx::Size m_window_size;
+    Gfx::IntRect m_rect;
+    Gfx::IntSize m_window_size;
 };
 
 class ResizeEvent final : public Event {
 public:
-    explicit ResizeEvent(const Gfx::Size& old_size, const Gfx::Size& size)
+    explicit ResizeEvent(const Gfx::IntSize& size)
         : Event(Event::Resize)
-        , m_old_size(old_size)
         , m_size(size)
     {
     }
 
-    const Gfx::Size& old_size() const { return m_old_size; }
-    const Gfx::Size& size() const { return m_size; }
+    const Gfx::IntSize& size() const { return m_size; }
 
 private:
-    Gfx::Size m_old_size;
-    Gfx::Size m_size;
+    Gfx::IntSize m_size;
 };
 
 class ContextMenuEvent final : public Event {
 public:
-    explicit ContextMenuEvent(const Gfx::Point& position, const Gfx::Point& screen_position)
+    explicit ContextMenuEvent(const Gfx::IntPoint& position, const Gfx::IntPoint& screen_position)
         : Event(Event::ContextMenu)
         , m_position(position)
         , m_screen_position(screen_position)
     {
     }
 
-    const Gfx::Point& position() const { return m_position; }
-    const Gfx::Point& screen_position() const { return m_screen_position; }
+    const Gfx::IntPoint& position() const { return m_position; }
+    const Gfx::IntPoint& screen_position() const { return m_screen_position; }
 
 private:
-    Gfx::Point m_position;
-    Gfx::Point m_screen_position;
+    Gfx::IntPoint m_position;
+    Gfx::IntPoint m_screen_position;
 };
 
 class ShowEvent final : public Event {
@@ -253,35 +271,49 @@ enum MouseButton : u8 {
     Left = 1,
     Right = 2,
     Middle = 4,
+    Back = 8,
+    Forward = 16,
 };
 
 class KeyEvent final : public Event {
 public:
-    KeyEvent(Type type, int key, u8 modifiers)
+    KeyEvent(Type type, KeyCode key, u8 modifiers, u32 code_point, u32 scancode)
         : Event(type)
         , m_key(key)
         , m_modifiers(modifiers)
+        , m_code_point(code_point)
+        , m_scancode(scancode)
     {
     }
 
-    int key() const { return m_key; }
+    KeyCode key() const { return m_key; }
     bool ctrl() const { return m_modifiers & Mod_Ctrl; }
     bool alt() const { return m_modifiers & Mod_Alt; }
     bool shift() const { return m_modifiers & Mod_Shift; }
     bool logo() const { return m_modifiers & Mod_Logo; }
     u8 modifiers() const { return m_modifiers; }
-    String text() const { return m_text; }
+    u32 code_point() const { return m_code_point; }
+    String text() const
+    {
+        StringBuilder sb;
+        sb.append_code_point(m_code_point);
+        return sb.to_string();
+    }
+    u32 scancode() const { return m_scancode; }
+
+    String to_string() const;
 
 private:
     friend class WindowServerConnection;
-    int m_key { 0 };
+    KeyCode m_key { KeyCode::Key_Invalid };
     u8 m_modifiers { 0 };
-    String m_text;
+    u32 m_code_point { 0 };
+    u32 m_scancode { 0 };
 };
 
 class MouseEvent final : public Event {
 public:
-    MouseEvent(Type type, const Gfx::Point& position, unsigned buttons, MouseButton button, unsigned modifiers, int wheel_delta)
+    MouseEvent(Type type, const Gfx::IntPoint& position, unsigned buttons, MouseButton button, unsigned modifiers, int wheel_delta)
         : Event(type)
         , m_position(position)
         , m_buttons(buttons)
@@ -291,16 +323,20 @@ public:
     {
     }
 
-    Gfx::Point position() const { return m_position; }
+    const Gfx::IntPoint& position() const { return m_position; }
     int x() const { return m_position.x(); }
     int y() const { return m_position.y(); }
     MouseButton button() const { return m_button; }
     unsigned buttons() const { return m_buttons; }
+    bool ctrl() const { return m_modifiers & Mod_Ctrl; }
+    bool alt() const { return m_modifiers & Mod_Alt; }
+    bool shift() const { return m_modifiers & Mod_Shift; }
+    bool logo() const { return m_modifiers & Mod_Logo; }
     unsigned modifiers() const { return m_modifiers; }
     int wheel_delta() const { return m_wheel_delta; }
 
 private:
-    Gfx::Point m_position;
+    Gfx::IntPoint m_position;
     unsigned m_buttons { 0 };
     MouseButton m_button { MouseButton::None };
     unsigned m_modifiers { 0 };
@@ -309,35 +345,57 @@ private:
 
 class DragEvent final : public Event {
 public:
-    DragEvent(Type type, const Gfx::Point& position, const String& data_type)
+    DragEvent(Type type, const Gfx::IntPoint& position, const String& data_type)
         : Event(type)
         , m_position(position)
         , m_data_type(data_type)
     {
     }
 
-    const Gfx::Point& position() const { return m_position; }
+    const Gfx::IntPoint& position() const { return m_position; }
     const String& data_type() const { return m_data_type; }
 
 private:
-    Gfx::Point m_position;
+    Gfx::IntPoint m_position;
     String m_data_type;
 };
 
 class DropEvent final : public Event {
 public:
-    DropEvent(const Gfx::Point&, const String& text, NonnullRefPtr<Core::MimeData> mime_data);
+    DropEvent(const Gfx::IntPoint&, const String& text, NonnullRefPtr<Core::MimeData> mime_data);
 
     ~DropEvent();
 
-    const Gfx::Point& position() const { return m_position; }
+    const Gfx::IntPoint& position() const { return m_position; }
     const String& text() const { return m_text; }
     const Core::MimeData& mime_data() const { return m_mime_data; }
 
 private:
-    Gfx::Point m_position;
+    Gfx::IntPoint m_position;
     String m_text;
     NonnullRefPtr<Core::MimeData> m_mime_data;
+};
+
+class ThemeChangeEvent final : public Event {
+public:
+    ThemeChangeEvent()
+        : Event(Type::ThemeChange)
+    {
+    }
+};
+
+class FocusEvent final : public Event {
+public:
+    explicit FocusEvent(Type type, FocusSource source)
+        : Event(type)
+        , m_source(source)
+    {
+    }
+
+    FocusSource source() const { return m_source; }
+
+private:
+    FocusSource m_source { FocusSource::Programmatic };
 };
 
 }

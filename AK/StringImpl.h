@@ -26,8 +26,10 @@
 
 #pragma once
 
-#include <AK/RefPtr.h>
+#include <AK/Badge.h>
 #include <AK/RefCounted.h>
+#include <AK/RefPtr.h>
+#include <AK/Span.h>
 #include <AK/Types.h>
 #include <AK/kmalloc.h>
 
@@ -43,6 +45,7 @@ public:
     static NonnullRefPtr<StringImpl> create_uninitialized(size_t length, char*& buffer);
     static RefPtr<StringImpl> create(const char* cstring, ShouldChomp = NoChomp);
     static RefPtr<StringImpl> create(const char* cstring, size_t length, ShouldChomp = NoChomp);
+    static RefPtr<StringImpl> create(ReadonlyBytes, ShouldChomp = NoChomp);
     NonnullRefPtr<StringImpl> to_lowercase() const;
     NonnullRefPtr<StringImpl> to_uppercase() const;
 
@@ -56,11 +59,22 @@ public:
     ~StringImpl();
 
     size_t length() const { return m_length; }
+    // Includes NUL-terminator.
     const char* characters() const { return &m_inline_buffer[0]; }
-    char operator[](size_t i) const
+
+    ALWAYS_INLINE ReadonlyBytes bytes() const { return { characters(), length() }; }
+
+    const char& operator[](size_t i) const
     {
         ASSERT(i < m_length);
         return characters()[i];
+    }
+
+    bool operator==(const StringImpl& other) const
+    {
+        if (length() != other.length())
+            return false;
+        return !__builtin_memcmp(characters(), other.characters(), length());
     }
 
     unsigned hash() const
@@ -70,11 +84,20 @@ public:
         return m_hash;
     }
 
+    unsigned existing_hash() const
+    {
+        return m_hash;
+    }
+
+    bool is_fly() const { return m_fly; }
+    void set_fly(Badge<FlyString>, bool fly) const { m_fly = fly; }
+
 private:
     enum ConstructTheEmptyStringImplTag {
         ConstructTheEmptyStringImpl
     };
     explicit StringImpl(ConstructTheEmptyStringImplTag)
+        : m_fly(true)
     {
         m_inline_buffer[0] = '\0';
     }
@@ -89,6 +112,7 @@ private:
     size_t m_length { 0 };
     mutable unsigned m_hash { 0 };
     mutable bool m_has_hash { false };
+    mutable bool m_fly { false };
     char m_inline_buffer[0];
 };
 
@@ -105,6 +129,14 @@ inline constexpr u32 string_hash(const char* characters, size_t length)
     hash += hash << 15;
     return hash;
 }
+
+template<>
+struct Formatter<StringImpl> : Formatter<StringView> {
+    void format(TypeErasedFormatParams& params, FormatBuilder& builder, const StringImpl& value)
+    {
+        Formatter<StringView>::format(params, builder, { value.characters(), value.length() });
+    }
+};
 
 }
 

@@ -47,9 +47,15 @@ bool Client::is_supported_protocol(const String& protocol)
     return send_sync<Messages::ProtocolServer::IsSupportedProtocol>(protocol)->supported();
 }
 
-RefPtr<Download> Client::start_download(const String& url)
+RefPtr<Download> Client::start_download(const String& method, const String& url, const HashMap<String, String>& request_headers, const ByteBuffer& request_body)
 {
-    i32 download_id = send_sync<Messages::ProtocolServer::StartDownload>(url)->download_id();
+    IPC::Dictionary header_dictionary;
+    for (auto& it : request_headers)
+        header_dictionary.add(it.key, it.value);
+
+    i32 download_id = send_sync<Messages::ProtocolServer::StartDownload>(method, url, header_dictionary, String::copy(request_body))->download_id();
+    if (download_id < 0)
+        return nullptr;
     auto download = Download::create_from_id({}, *this, download_id);
     m_downloads.set(download_id, download);
     return download;
@@ -62,13 +68,20 @@ bool Client::stop_download(Badge<Download>, Download& download)
     return send_sync<Messages::ProtocolServer::StopDownload>(download.id())->success();
 }
 
+bool Client::set_certificate(Badge<Download>, Download& download, String certificate, String key)
+{
+    if (!m_downloads.contains(download.id()))
+        return false;
+    return send_sync<Messages::ProtocolServer::SetCertificate>(download.id(), move(certificate), move(key))->success();
+}
+
 void Client::handle(const Messages::ProtocolClient::DownloadFinished& message)
 {
     RefPtr<Download> download;
     if ((download = m_downloads.get(message.download_id()).value_or(nullptr))) {
-        download->did_finish({}, message.success(), message.total_size(), message.shared_buffer_id());
+        download->did_finish({}, message.success(), message.status_code(), message.total_size(), message.shbuf_id(), message.response_headers());
     }
-    send_sync<Messages::ProtocolServer::DisownSharedBuffer>(message.shared_buffer_id());
+    send_sync<Messages::ProtocolServer::DisownSharedBuffer>(message.shbuf_id());
     m_downloads.remove(message.download_id());
 }
 
@@ -77,6 +90,15 @@ void Client::handle(const Messages::ProtocolClient::DownloadProgress& message)
     if (auto download = const_cast<Download*>(m_downloads.get(message.download_id()).value_or(nullptr))) {
         download->did_progress({}, message.total_size(), message.downloaded_size());
     }
+}
+
+OwnPtr<Messages::ProtocolClient::CertificateRequestedResponse> Client::handle(const Messages::ProtocolClient::CertificateRequested& message)
+{
+    if (auto download = const_cast<Download*>(m_downloads.get(message.download_id()).value_or(nullptr))) {
+        download->did_request_certificates({});
+    }
+
+    return make<Messages::ProtocolClient::CertificateRequestedResponse>();
 }
 
 }

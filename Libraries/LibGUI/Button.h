@@ -28,10 +28,10 @@
 
 #include <AK/Function.h>
 #include <AK/String.h>
+#include <LibGUI/AbstractButton.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/StylePainter.h>
 #include <LibGfx/TextAlignment.h>
-#include <LibGUI/AbstractButton.h>
 
 namespace GUI {
 
@@ -47,12 +47,14 @@ public:
     void set_text_alignment(Gfx::TextAlignment text_alignment) { m_text_alignment = text_alignment; }
     Gfx::TextAlignment text_alignment() const { return m_text_alignment; }
 
-    Function<void(Button&)> on_click;
+    Function<void(unsigned modifiers)> on_click;
+    Function<void(const ContextMenuEvent&)> on_context_menu_request;
 
     void set_button_style(Gfx::ButtonStyle style) { m_button_style = style; }
     Gfx::ButtonStyle button_style() const { return m_button_style; }
 
-    virtual void click() override;
+    virtual void click(unsigned modifiers = 0) override;
+    virtual void context_menu_event(ContextMenuEvent&) override;
 
     void set_action(Action&);
 

@@ -33,34 +33,42 @@
 namespace GUI {
 
 class BoxLayout : public Layout {
+    C_OBJECT(BoxLayout);
+
 public:
-    explicit BoxLayout(Gfx::Orientation);
-    virtual ~BoxLayout() override {}
+    virtual ~BoxLayout() override { }
 
     Gfx::Orientation orientation() const { return m_orientation; }
 
     virtual void run(Widget&) override;
+
+protected:
+    explicit BoxLayout(Gfx::Orientation);
 
 private:
     Gfx::Orientation m_orientation;
 };
 
 class VerticalBoxLayout final : public BoxLayout {
+    C_OBJECT(VerticalBoxLayout);
+
 public:
     explicit VerticalBoxLayout()
         : BoxLayout(Gfx::Orientation::Vertical)
     {
     }
-    virtual ~VerticalBoxLayout() override {}
+    virtual ~VerticalBoxLayout() override { }
 };
 
 class HorizontalBoxLayout final : public BoxLayout {
+    C_OBJECT(HorizontalBoxLayout);
+
 public:
     explicit HorizontalBoxLayout()
         : BoxLayout(Gfx::Orientation::Horizontal)
     {
     }
-    virtual ~HorizontalBoxLayout() override {}
+    virtual ~HorizontalBoxLayout() override { }
 };
 
 }

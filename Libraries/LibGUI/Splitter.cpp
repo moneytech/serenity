@@ -36,9 +36,9 @@ Splitter::Splitter(Orientation orientation)
     : m_orientation(orientation)
 {
     set_background_role(ColorRole::Button);
-    set_layout(make<BoxLayout>(orientation));
+    set_layout<BoxLayout>(orientation);
     set_fill_with_background_color(true);
-    layout()->set_spacing(4);
+    layout()->set_spacing(3);
 }
 
 Splitter::~Splitter()
@@ -54,39 +54,55 @@ void Splitter::paint_event(PaintEvent& event)
 
 void Splitter::resize_event(ResizeEvent& event)
 {
-    Frame::resize_event(event);
+    Widget::resize_event(event);
     m_grabbable_rect = {};
 }
 
-void Splitter::enter_event(Core::Event&)
+void Splitter::override_cursor(bool do_override)
 {
-    window()->set_override_cursor(m_orientation == Orientation::Horizontal ? StandardCursor::ResizeHorizontal : StandardCursor::ResizeVertical);
+    if (do_override) {
+        if (!m_overriding_cursor) {
+            set_override_cursor(m_orientation == Orientation::Horizontal ? Gfx::StandardCursor::ResizeColumn : Gfx::StandardCursor::ResizeRow);
+            m_overriding_cursor = true;
+        }
+    } else {
+        if (m_overriding_cursor) {
+            set_override_cursor(Gfx::StandardCursor::None);
+            m_overriding_cursor = false;
+        }
+    }
 }
 
 void Splitter::leave_event(Core::Event&)
 {
     if (!m_resizing)
-        window()->set_override_cursor(StandardCursor::None);
+        override_cursor(false);
     if (!m_grabbable_rect.is_empty()) {
         m_grabbable_rect = {};
         update();
     }
 }
 
-bool Splitter::get_resize_candidates_at(const Gfx::Point& position, Widget*& first, Widget*& second)
+bool Splitter::get_resize_candidates_at(const Gfx::IntPoint& position, Widget*& first, Widget*& second)
 {
     int x_or_y = position.primary_offset_for_orientation(m_orientation);
-    int fudge = layout()->spacing();
-    for_each_child_widget([&](auto& child) {
-        int child_start = child.relative_rect().first_edge_for_orientation(m_orientation);
-        int child_end = child.relative_rect().last_edge_for_orientation(m_orientation);
-        if (x_or_y > child_end && (x_or_y - fudge) <= child_end)
-            first = &child;
-        if (x_or_y < child_start && (x_or_y + fudge) >= child_start)
-            second = &child;
-        return IterationDecision::Continue;
-    });
-    return first && second;
+
+    auto child_widgets = this->child_widgets();
+    if (child_widgets.size() < 2)
+        return false;
+
+    for (size_t i = 0; i < child_widgets.size() - 1; ++i) {
+        auto* first_candidate = child_widgets[i];
+        auto* second_candidate = child_widgets[i + 1];
+
+        if (x_or_y > first_candidate->content_rect().last_edge_for_orientation(m_orientation)
+            && x_or_y <= second_candidate->content_rect().first_edge_for_orientation(m_orientation)) {
+            first = first_candidate;
+            second = second_candidate;
+            return true;
+        }
+    }
+    return false;
 }
 
 void Splitter::mousedown_event(MouseEvent& event)
@@ -109,13 +125,14 @@ void Splitter::mousedown_event(MouseEvent& event)
 
 void Splitter::recompute_grabbable_rect(const Widget& first, const Widget& second)
 {
-    auto first_edge = first.relative_rect().primary_offset_for_orientation(m_orientation) + first.relative_rect().primary_size_for_orientation(m_orientation);
-    auto second_edge = second.relative_rect().primary_offset_for_orientation(m_orientation);
-    Gfx::Rect rect;
+    auto first_edge = first.content_rect().primary_offset_for_orientation(m_orientation) + first.content_rect().primary_size_for_orientation(m_orientation);
+    auto second_edge = second.content_rect().primary_offset_for_orientation(m_orientation);
+    Gfx::IntRect rect;
     rect.set_primary_offset_for_orientation(m_orientation, first_edge);
     rect.set_primary_size_for_orientation(m_orientation, second_edge - first_edge);
-    rect.set_secondary_offset_for_orientation(m_orientation, first.relative_rect().secondary_offset_for_orientation(m_orientation));
-    rect.set_secondary_size_for_orientation(m_orientation, first.relative_rect().secondary_size_for_orientation(m_orientation));
+    rect.set_secondary_offset_for_orientation(m_orientation, first.content_rect().secondary_offset_for_orientation(m_orientation));
+    rect.set_secondary_size_for_orientation(m_orientation, first.content_rect().secondary_size_for_orientation(m_orientation));
+
     if (m_grabbable_rect != rect) {
         m_grabbable_rect = rect;
         update();
@@ -127,9 +144,12 @@ void Splitter::mousemove_event(MouseEvent& event)
     if (!m_resizing) {
         Widget* first { nullptr };
         Widget* second { nullptr };
-        if (!get_resize_candidates_at(event.position(), first, second))
+        if (!get_resize_candidates_at(event.position(), first, second)) {
+            override_cursor(false);
             return;
+        }
         recompute_grabbable_rect(*first, *second);
+        override_cursor(m_grabbable_rect.contains(event.position()));
         return;
     }
     auto delta = event.position() - m_resize_origin;
@@ -178,7 +198,7 @@ void Splitter::mouseup_event(MouseEvent& event)
     m_first_resizee = nullptr;
     m_second_resizee = nullptr;
     if (!rect().contains(event.position()))
-        window()->set_override_cursor(StandardCursor::None);
+        set_override_cursor(Gfx::StandardCursor::None);
 }
 
 }

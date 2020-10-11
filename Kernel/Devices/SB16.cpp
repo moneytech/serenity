@@ -24,11 +24,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Memory.h>
+#include <AK/Singleton.h>
+#include <AK/StringView.h>
 #include <Kernel/Devices/SB16.h>
+#include <Kernel/IO.h>
 #include <Kernel/Thread.h>
 #include <Kernel/VM/AnonymousVMObject.h>
 #include <Kernel/VM/MemoryManager.h>
-#include <LibBareMetal/IO.h>
 
 //#define SB16_DEBUG
 
@@ -74,18 +77,22 @@ void SB16::set_sample_rate(uint16_t hz)
     dsp_write((u8)hz);
 }
 
-static SB16* s_the;
+static AK::Singleton<SB16> s_the;
 
 SB16::SB16()
     : IRQHandler(SB16_DEFAULT_IRQ)
     , CharacterDevice(42, 42) // ### ?
 {
-    s_the = this;
     initialize();
 }
 
 SB16::~SB16()
 {
+}
+
+void SB16::create()
+{
+    s_the.ensure_instance();
 }
 
 SB16& SB16::the()
@@ -98,12 +105,12 @@ void SB16::initialize()
     disable_irq();
 
     IO::out8(0x226, 1);
-    IO::delay();
+    IO::delay(32);
     IO::out8(0x226, 0);
 
     auto data = dsp_read();
     if (data != 0xaa) {
-        kprintf("SB16: sb not ready");
+        klog() << "SB16: sb not ready";
         return;
     }
 
@@ -112,9 +119,9 @@ void SB16::initialize()
     m_major_version = dsp_read();
     auto vmin = dsp_read();
 
-    kprintf("SB16: found version %d.%d\n", m_major_version, vmin);
+    klog() << "SB16: found version " << m_major_version << "." << vmin;
     set_irq_register(SB16_DEFAULT_IRQ);
-    kprintf("SB16: IRQ %d\n", get_irq_line());
+    klog() << "SB16: IRQ " << get_irq_line();
 }
 
 void SB16::set_irq_register(u8 irq_number)
@@ -165,21 +172,21 @@ void SB16::set_irq_line(u8 irq_number)
     change_irq_number(irq_number);
 }
 
-bool SB16::can_read(const FileDescription&) const
+bool SB16::can_read(const FileDescription&, size_t) const
 {
     return false;
 }
 
-ssize_t SB16::read(FileDescription&, u8*, ssize_t)
+KResultOr<size_t> SB16::read(FileDescription&, size_t, UserOrKernelBuffer&, size_t)
 {
     return 0;
 }
 
 void SB16::dma_start(uint32_t length)
 {
-    const auto addr = m_dma_region->vmobject().physical_pages()[0]->paddr().get();
+    const auto addr = m_dma_region->physical_page(0)->paddr().get();
     const u8 channel = 5; // 16-bit samples use DMA channel 5 (on the master DMA controller)
-    const u8 mode = 0;
+    const u8 mode = 0x48;
 
     // Disable the DMA channel
     IO::out8(0xd4, 4 + (channel % 4));
@@ -206,7 +213,7 @@ void SB16::dma_start(uint32_t length)
     IO::out8(0xd4, (channel % 4));
 }
 
-void SB16::handle_irq(RegisterState&)
+void SB16::handle_irq(const RegisterState&)
 {
     // Stop sound output ready for the next block.
     dsp_write(0xd5);
@@ -220,34 +227,37 @@ void SB16::handle_irq(RegisterState&)
 
 void SB16::wait_for_irq()
 {
-    cli();
-    enable_irq();
-    Thread::current->wait_on(m_irq_queue);
+    Thread::current()->wait_on(m_irq_queue, "SB16");
     disable_irq();
 }
 
-ssize_t SB16::write(FileDescription&, const u8* data, ssize_t length)
+KResultOr<size_t> SB16::write(FileDescription&, size_t, const UserOrKernelBuffer& data, size_t length)
 {
     if (!m_dma_region) {
         auto page = MM.allocate_supervisor_physical_page();
+        if (!page)
+            return KResult(-ENOMEM);
         auto vmobject = AnonymousVMObject::create_with_physical_page(*page);
         m_dma_region = MM.allocate_kernel_region_with_vmobject(*vmobject, PAGE_SIZE, "SB16 DMA buffer", Region::Access::Write);
+        if (!m_dma_region)
+            return KResult(-ENOMEM);
     }
 
 #ifdef SB16_DEBUG
-    kprintf("SB16: Writing buffer of %d bytes\n", length);
+    klog() << "SB16: Writing buffer of " << length << " bytes";
 #endif
     ASSERT(length <= PAGE_SIZE);
     const int BLOCK_SIZE = 32 * 1024;
     if (length > BLOCK_SIZE) {
-        return -ENOSPC;
+        return KResult(-ENOSPC);
     }
 
     u8 mode = (u8)SampleFormat::Signed | (u8)SampleFormat::Stereo;
 
     const int sample_rate = 44100;
     set_sample_rate(sample_rate);
-    memcpy(m_dma_region->vaddr().as_ptr(), data, length);
+    if (!data.read(m_dma_region->vaddr().as_ptr(), length))
+        return KResult(-EFAULT);
     dma_start(length);
 
     // 16-bit single-cycle output.
@@ -259,6 +269,9 @@ ssize_t SB16::write(FileDescription&, const u8* data, ssize_t length)
         sample_count /= 2;
 
     sample_count -= 1;
+
+    cli();
+    enable_irq();
 
     dsp_write(command);
     dsp_write(mode);

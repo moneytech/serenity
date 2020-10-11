@@ -33,21 +33,20 @@
 
 namespace Kernel {
 
-enum class HandlerPurpose : u8 {
+enum class HandlerType : u8 {
     IRQHandler = 1,
     SharedIRQHandler = 2,
     UnhandledInterruptHandler = 3,
+    SpuriousInterruptHandler = 4
 };
 
 class GenericInterruptHandler {
 public:
     static GenericInterruptHandler& from(u8 interrupt_number);
     virtual ~GenericInterruptHandler();
-    virtual void handle_interrupt(RegisterState& regs) = 0;
+    virtual void handle_interrupt(const RegisterState& regs) = 0;
 
     u8 interrupt_number() const { return m_interrupt_number; }
-
-    bool is_enabled() const { return m_enabled; }
 
     size_t get_invoking_count() const { return m_invoking_count; }
 
@@ -55,20 +54,20 @@ public:
     virtual bool is_shared_handler() const = 0;
     virtual bool is_sharing_with_others() const = 0;
 
-    virtual HandlerPurpose purpose() const = 0;
+    virtual HandlerType type() const = 0;
+    virtual const char* purpose() const = 0;
+    virtual const char* controller() const = 0;
 
     virtual bool eoi() = 0;
     void increment_invoking_counter();
 
 protected:
-    void enable_interrupt_vector();
-    void disable_interrupt_vector();
     void change_interrupt_number(u8 number);
-    explicit GenericInterruptHandler(u8 interrupt_number);
+    GenericInterruptHandler(u8 interrupt_number, bool disable_remap = false);
 
 private:
     size_t m_invoking_count { 0 };
-    bool m_enabled { false };
     u8 m_interrupt_number { 0 };
+    bool m_disable_remap { false };
 };
 }

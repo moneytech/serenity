@@ -30,6 +30,7 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/SharedBuffer.h>
+#include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -46,10 +47,24 @@ ProcessModel::ProcessModel()
 {
     ASSERT(!s_the);
     s_the = this;
-    m_generic_process_icon = Gfx::Bitmap::load_from_file("/res/icons/gear16.png");
-    m_high_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/highpriority16.png");
-    m_low_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/lowpriority16.png");
-    m_normal_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/normalpriority16.png");
+    m_generic_process_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/gear.png");
+    m_high_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/highpriority.png");
+    m_low_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/lowpriority.png");
+    m_normal_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/normalpriority.png");
+
+    auto file = Core::File::construct("/proc/cpuinfo");
+    if (file->open(Core::IODevice::ReadOnly)) {
+        auto json = JsonValue::from_string({ file->read_all() });
+        auto cpuinfo_array = json.value().as_array();
+        cpuinfo_array.for_each([&](auto& value) {
+            auto& cpu_object = value.as_object();
+            auto cpu_id = cpu_object.get("processor").as_u32();
+            m_cpus.append(make<CpuInfo>(cpu_id));
+        });
+    }
+
+    if (m_cpus.is_empty())
+        m_cpus.append(make<CpuInfo>(0));
 }
 
 ProcessModel::~ProcessModel()
@@ -75,6 +90,12 @@ String ProcessModel::column_name(int column) const
         return "PID";
     case Column::TID:
         return "TID";
+    case Column::PPID:
+        return "PPID";
+    case Column::PGID:
+        return "PGID";
+    case Column::SID:
+        return "SID";
     case Column::State:
         return "State";
     case Column::User:
@@ -97,6 +118,8 @@ String ProcessModel::column_name(int column) const
         return "Purg:N";
     case Column::CPU:
         return "CPU";
+    case Column::Processor:
+        return "Processor";
     case Column::Name:
         return "Name";
     case Column::Syscalls:
@@ -128,81 +151,59 @@ String ProcessModel::column_name(int column) const
     }
 }
 
-GUI::Model::ColumnMetadata ProcessModel::column_metadata(int column) const
-{
-    switch (column) {
-    case Column::Icon:
-        return { 16, Gfx::TextAlignment::CenterLeft };
-    case Column::PID:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::TID:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::State:
-        return { 75, Gfx::TextAlignment::CenterLeft };
-    case Column::Priority:
-        return { 16, Gfx::TextAlignment::CenterRight };
-    case Column::EffectivePriority:
-        return { 16, Gfx::TextAlignment::CenterRight };
-    case Column::User:
-        return { 50, Gfx::TextAlignment::CenterLeft };
-    case Column::Virtual:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::Physical:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::DirtyPrivate:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::CleanInode:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::PurgeableVolatile:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::PurgeableNonvolatile:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::CPU:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::Name:
-        return { 140, Gfx::TextAlignment::CenterLeft };
-    case Column::Syscalls:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::InodeFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::ZeroFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::CowFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::FileReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::FileWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::UnixSocketReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::UnixSocketWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::IPv4SocketReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::IPv4SocketWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::Pledge:
-        return { 60, Gfx::TextAlignment::CenterLeft };
-    case Column::Veil:
-        return { 60, Gfx::TextAlignment::CenterLeft };
-    default:
-        ASSERT_NOT_REACHED();
-    }
-}
-
 static String pretty_byte_size(size_t size)
 {
-    return String::format("%uK", size / 1024);
+    return String::formatted("{}K", size / 1024);
 }
 
-GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
+GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
 {
     ASSERT(is_valid(index));
+
+    if (role == GUI::ModelRole::TextAlignment) {
+        switch (index.column()) {
+        case Column::Icon:
+        case Column::Name:
+        case Column::State:
+        case Column::User:
+        case Column::Pledge:
+        case Column::Veil:
+            return Gfx::TextAlignment::CenterLeft;
+        case Column::PID:
+        case Column::TID:
+        case Column::PPID:
+        case Column::PGID:
+        case Column::SID:
+        case Column::Priority:
+        case Column::EffectivePriority:
+        case Column::Virtual:
+        case Column::Physical:
+        case Column::DirtyPrivate:
+        case Column::CleanInode:
+        case Column::PurgeableVolatile:
+        case Column::PurgeableNonvolatile:
+        case Column::CPU:
+        case Column::Processor:
+        case Column::Syscalls:
+        case Column::InodeFaults:
+        case Column::ZeroFaults:
+        case Column::CowFaults:
+        case Column::FileReadBytes:
+        case Column::FileWriteBytes:
+        case Column::UnixSocketReadBytes:
+        case Column::UnixSocketWriteBytes:
+        case Column::IPv4SocketReadBytes:
+        case Column::IPv4SocketWriteBytes:
+            return Gfx::TextAlignment::CenterRight;
+        default:
+            ASSERT_NOT_REACHED();
+        }
+    }
 
     auto it = m_threads.find(m_pids[index.row()]);
     auto& thread = *(*it).value;
 
-    if (role == Role::Sort) {
+    if (role == GUI::ModelRole::Sort) {
         switch (index.column()) {
         case Column::Icon:
             return 0;
@@ -210,6 +211,12 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return thread.current_state.pid;
         case Column::TID:
             return thread.current_state.tid;
+        case Column::PPID:
+            return thread.current_state.ppid;
+        case Column::PGID:
+            return thread.current_state.pgid;
+        case Column::SID:
+            return thread.current_state.sid;
         case Column::State:
             return thread.current_state.state;
         case Column::User:
@@ -232,6 +239,8 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return (int)thread.current_state.amount_purgeable_nonvolatile;
         case Column::CPU:
             return thread.current_state.cpu_percent;
+        case Column::Processor:
+            return thread.current_state.cpu;
         case Column::Name:
             return thread.current_state.name;
         case Column::Syscalls:
@@ -263,11 +272,11 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
         return {};
     }
 
-    if (role == Role::Display) {
+    if (role == GUI::ModelRole::Display) {
         switch (index.column()) {
         case Column::Icon:
             if (thread.current_state.icon_id != -1) {
-                auto icon_buffer = SharedBuffer::create_from_shared_buffer_id(thread.current_state.icon_id);
+                auto icon_buffer = SharedBuffer::create_from_shbuf_id(thread.current_state.icon_id);
                 if (icon_buffer) {
                     auto icon_bitmap = Gfx::Bitmap::create_with_shared_buffer(Gfx::BitmapFormat::RGBA32, *icon_buffer, { 16, 16 });
                     if (icon_bitmap)
@@ -279,6 +288,12 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return thread.current_state.pid;
         case Column::TID:
             return thread.current_state.tid;
+        case Column::PPID:
+            return thread.current_state.ppid;
+        case Column::PGID:
+            return thread.current_state.pgid;
+        case Column::SID:
+            return thread.current_state.sid;
         case Column::State:
             return thread.current_state.state;
         case Column::User:
@@ -301,6 +316,8 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return pretty_byte_size(thread.current_state.amount_purgeable_nonvolatile);
         case Column::CPU:
             return thread.current_state.cpu_percent;
+        case Column::Processor:
+            return thread.current_state.cpu;
         case Column::Name:
             return thread.current_state.name;
         case Column::Syscalls:
@@ -335,6 +352,7 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
 
 void ProcessModel::update()
 {
+    auto previous_pid_count = m_pids.size();
     auto all_processes = Core::ProcessStatisticsReader::get_all();
 
     unsigned last_sum_times_scheduled = 0;
@@ -370,8 +388,13 @@ void ProcessModel::update()
 
             state.name = thread.name;
 
+            state.ppid = it.value.ppid;
             state.tid = thread.tid;
+            state.pgid = it.value.pgid;
+            state.sid = it.value.sid;
             state.times_scheduled = thread.times_scheduled;
+            state.cpu = thread.cpu;
+            state.cpu_percent = 0;
             state.priority = thread.priority;
             state.effective_priority = thread.effective_priority;
             state.state = thread.state;
@@ -391,7 +414,8 @@ void ProcessModel::update()
     }
 
     m_pids.clear();
-    float total_cpu_percent = 0;
+    for (auto& c : m_cpus)
+        c.total_cpu_percent = 0.0;
     Vector<PidAndTid, 16> pids_to_remove;
     for (auto& it : m_threads) {
         if (!live_pids.contains(it.key)) {
@@ -402,15 +426,17 @@ void ProcessModel::update()
         u32 times_scheduled_diff = process.current_state.times_scheduled - process.previous_state.times_scheduled;
         process.current_state.cpu_percent = ((float)times_scheduled_diff * 100) / (float)(sum_times_scheduled - last_sum_times_scheduled);
         if (it.key.pid != 0) {
-            total_cpu_percent += process.current_state.cpu_percent;
+            m_cpus[process.current_state.cpu].total_cpu_percent += process.current_state.cpu_percent;
             m_pids.append(it.key);
         }
     }
     for (auto pid : pids_to_remove)
         m_threads.remove(pid);
 
-    if (on_new_cpu_data_point)
-        on_new_cpu_data_point(total_cpu_percent);
+    if (on_cpu_info_change)
+        on_cpu_info_change(m_cpus);
 
-    did_update();
+    // FIXME: This is a rather hackish way of invalidating indexes.
+    //        It would be good if GUI::Model had a way to orchestrate removal/insertion while preserving indexes.
+    did_update(previous_pid_count == m_pids.size() ? GUI::Model::UpdateFlag::DontInvalidateIndexes : GUI::Model::UpdateFlag::InvalidateAllIndexes);
 }

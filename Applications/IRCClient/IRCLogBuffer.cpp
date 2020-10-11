@@ -26,14 +26,11 @@
 
 #include "IRCLogBuffer.h"
 #include <AK/StringBuilder.h>
-#include <LibHTML/DOM/DocumentFragment.h>
-#include <LibHTML/DOM/DocumentType.h>
-#include <LibHTML/DOM/ElementFactory.h>
-#include <LibHTML/DOM/HTMLBodyElement.h>
-#include <LibHTML/DOM/Text.h>
-#include <LibHTML/Dump.h>
-#include <LibHTML/Parser/HTMLParser.h>
-#include <stdio.h>
+#include <LibWeb/DOM/DocumentFragment.h>
+#include <LibWeb/DOM/DocumentType.h>
+#include <LibWeb/DOM/ElementFactory.h>
+#include <LibWeb/DOM/Text.h>
+#include <LibWeb/HTML/HTMLBodyElement.h>
 #include <time.h>
 
 NonnullRefPtr<IRCLogBuffer> IRCLogBuffer::create()
@@ -43,14 +40,14 @@ NonnullRefPtr<IRCLogBuffer> IRCLogBuffer::create()
 
 IRCLogBuffer::IRCLogBuffer()
 {
-    m_document = adopt(*new Document);
-    m_document->append_child(adopt(*new DocumentType(document())));
+    m_document = adopt(*new Web::DOM::Document);
+    m_document->append_child(adopt(*new Web::DOM::DocumentType(document())));
     auto html_element = create_element(document(), "html");
     m_document->append_child(html_element);
     auto head_element = create_element(document(), "head");
     html_element->append_child(head_element);
     auto style_element = create_element(document(), "style");
-    style_element->append_child(adopt(*new Text(document(), "div { font-family: Csilla; font-weight: lighter; }")));
+    style_element->append_child(adopt(*new Web::DOM::Text(document(), "div { font-family: Csilla; font-weight: lighter; }")));
     head_element->append_child(style_element);
     auto body_element = create_element(document(), "body");
     html_element->append_child(body_element);
@@ -65,43 +62,37 @@ static String timestamp_string()
 {
     auto now = time(nullptr);
     auto* tm = localtime(&now);
-    return String::format("%02u:%02u:%02u ", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    return String::formatted("{:02}:{:02}:{:02} ", tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
 void IRCLogBuffer::add_message(char prefix, const String& name, const String& text, Color color)
 {
-    auto nick_string = String::format("<%c%s> ", prefix ? prefix : ' ', name.characters());
-    auto html = String::format(
-        "<div style=\"color: %s\">"
-        "<span>%s</span>"
-        "<b>%s</b>"
-        "<span>%s</span>"
-        "</div>",
-        color.to_string().characters(),
-        timestamp_string().characters(),
-        escape_html_entities(nick_string).characters(),
-        escape_html_entities(text).characters());
-    auto fragment = parse_html_fragment(*m_document, html);
-    m_container_element->append_child(fragment->remove_child(*fragment->first_child()));
+    auto nick_string = String::formatted("<{}{}> ", prefix ? prefix : ' ', name.characters());
+    auto html = String::formatted(
+        "<span>{}</span>"
+        "<b>{}</b>"
+        "<span>{}</span>",
+        timestamp_string(),
+        escape_html_entities(nick_string),
+        escape_html_entities(text));
+
+    auto wrapper = Web::DOM::create_element(*m_document, Web::HTML::TagNames::div);
+    wrapper->set_attribute(Web::HTML::AttributeNames::style, String::formatted("color: {}", color.to_string()));
+    wrapper->set_inner_html(html);
+    m_container_element->append_child(wrapper);
     m_document->force_layout();
 }
 
 void IRCLogBuffer::add_message(const String& text, Color color)
 {
-    auto html = String::format(
-        "<div style=\"color: %s\">"
-        "<span>%s</span>"
-        "<span>%s</span>"
-        "</div>",
-        color.to_string().characters(),
-        timestamp_string().characters(),
-        escape_html_entities(text).characters());
-    auto fragment = parse_html_fragment(*m_document, html);
-    m_container_element->append_child(fragment->remove_child(*fragment->first_child()));
+    auto html = String::formatted(
+        "<span>{}</span>"
+        "<span>{}</span>",
+        timestamp_string(),
+        escape_html_entities(text));
+    auto wrapper = Web::DOM::create_element(*m_document, Web::HTML::TagNames::div);
+    wrapper->set_attribute(Web::HTML::AttributeNames::style, String::formatted("color: {}", color.to_string()));
+    wrapper->set_inner_html(html);
+    m_container_element->append_child(wrapper);
     m_document->force_layout();
-}
-
-void IRCLogBuffer::dump() const
-{
-    // FIXME: Remove me?
 }

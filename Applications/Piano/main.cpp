@@ -25,8 +25,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "AudioEngine.h"
 #include "MainWidget.h"
+#include "TrackManager.h"
+#include <AK/Array.h>
 #include <LibAudio/ClientConnection.h>
 #include <LibAudio/WavWriter.h>
 #include <LibCore/EventLoop.h>
@@ -44,18 +45,17 @@
 
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     auto audio_client = Audio::ClientConnection::construct();
     audio_client->handshake();
 
-    AudioEngine audio_engine;
+    TrackManager track_manager;
 
     auto window = GUI::Window::construct();
-    auto main_widget = MainWidget::construct(audio_engine);
-    window->set_main_widget(main_widget);
+    auto& main_widget = window->set_main_widget<MainWidget>(track_manager);
     window->set_title("Piano");
-    window->set_rect(90, 90, 840, 600);
+    window->resize(840, 600);
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-piano.png"));
     window->show();
 
@@ -66,59 +66,63 @@ int main(int argc, char** argv)
     LibThread::Thread audio_thread([&] {
         auto audio = Core::File::construct("/dev/audio");
         if (!audio->open(Core::IODevice::WriteOnly)) {
-            dbgprintf("Can't open audio device: %s", audio->error_string());
+            dbgln("Can't open audio device: {}", audio->error_string());
             return 1;
         }
 
-        FixedArray<Sample> buffer(sample_count);
+        Array<Sample, sample_count> buffer;
         for (;;) {
-            audio_engine.fill_buffer(buffer);
+            track_manager.fill_buffer(buffer);
             audio->write(reinterpret_cast<u8*>(buffer.data()), buffer_size);
-            Core::EventLoop::current().post_event(*main_widget, make<Core::CustomEvent>(0));
+            Core::EventLoop::current().post_event(main_widget, make<Core::CustomEvent>(0));
             Core::EventLoop::wake();
 
             if (need_to_write_wav) {
                 need_to_write_wav = false;
-                audio_engine.reset();
-                while (audio_engine.current_column() < horizontal_notes - 1) {
-                    audio_engine.fill_buffer(buffer);
+                track_manager.reset();
+                track_manager.set_should_loop(false);
+                do {
+                    track_manager.fill_buffer(buffer);
                     wav_writer.write_samples(reinterpret_cast<u8*>(buffer.data()), buffer_size);
-                }
-                audio_engine.reset();
+                } while (track_manager.time());
+                track_manager.reset();
+                track_manager.set_should_loop(true);
                 wav_writer.finalize();
             }
         }
     });
     audio_thread.start();
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
-    auto app_menu = GUI::Menu::construct("Piano");
-    app_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
-        return;
-    }));
-    app_menu->add_action(GUI::Action::create("Export", { Mod_Ctrl, Key_E }, [&](const GUI::Action&) {
-        save_path = GUI::FilePicker::get_save_filepath("Untitled", "wav");
+    auto& app_menu = menubar->add_menu("Piano");
+    app_menu.add_action(GUI::Action::create("Export", { Mod_Ctrl, Key_E }, [&](const GUI::Action&) {
+        save_path = GUI::FilePicker::get_save_filepath(window, "Untitled", "wav");
         if (!save_path.has_value())
             return;
         wav_writer.set_file(save_path.value());
         if (wav_writer.has_error()) {
-            GUI::MessageBox::show(String::format("Failed to export WAV file: %s", wav_writer.error_string()), "Error", GUI::MessageBox::Type::Error);
+            GUI::MessageBox::show(window, String::formatted("Failed to export WAV file: {}", wav_writer.error_string()), "Error", GUI::MessageBox::Type::Error);
             wav_writer.clear_error();
             return;
         }
         need_to_write_wav = true;
     }));
-    menubar->add_menu(move(app_menu));
+    app_menu.add_separator();
+    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+        GUI::Application::the()->quit();
+        return;
+    }));
 
-    auto help_menu = GUI::Menu::construct("Help");
-    help_menu->add_action(GUI::Action::create("About", [&](const GUI::Action&) {
+    auto& edit_menu = menubar->add_menu("Edit");
+    main_widget.add_actions(edit_menu);
+
+    auto& help_menu = menubar->add_menu("Help");
+    help_menu.add_action(GUI::Action::create("About", [&](const GUI::Action&) {
         GUI::AboutDialog::show("Piano", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-piano.png"), window);
     }));
-    menubar->add_menu(move(help_menu));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
-    return app.exec();
+    return app->exec();
 }

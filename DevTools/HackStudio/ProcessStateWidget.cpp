@@ -32,29 +32,31 @@
 #include <LibGfx/Font.h>
 #include <unistd.h>
 
+namespace HackStudio {
+
 ProcessStateWidget::ProcessStateWidget()
 {
     set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     set_preferred_size(0, 20);
     set_visible(false);
 
-    set_layout(make<GUI::HorizontalBoxLayout>());
+    set_layout<GUI::HorizontalBoxLayout>();
 
-    auto pid_label_label = add<GUI::Label>("Process:");
-    pid_label_label->set_font(Gfx::Font::default_bold_font());
+    auto& pid_label_label = add<GUI::Label>("Process:");
+    pid_label_label.set_font(Gfx::Font::default_bold_font());
     m_pid_label = add<GUI::Label>("");
 
-    auto state_label_label = add<GUI::Label>("State:");
-    state_label_label->set_font(Gfx::Font::default_bold_font());
+    auto& state_label_label = add<GUI::Label>("State:");
+    state_label_label.set_font(Gfx::Font::default_bold_font());
     m_state_label = add<GUI::Label>("");
 
     // FIXME: This should show CPU% instead.
-    auto cpu_label_label = add<GUI::Label>("Times scheduled:");
-    cpu_label_label->set_font(Gfx::Font::default_bold_font());
+    auto& cpu_label_label = add<GUI::Label>("Times scheduled:");
+    cpu_label_label.set_font(Gfx::Font::default_bold_font());
     m_cpu_label = add<GUI::Label>("");
 
-    auto memory_label_label = add<GUI::Label>("Memory (resident):");
-    memory_label_label->set_font(Gfx::Font::default_bold_font());
+    auto& memory_label_label = add<GUI::Label>("Memory (resident):");
+    memory_label_label.set_font(Gfx::Font::default_bold_font());
     m_memory_label = add<GUI::Label>("");
 
     m_timer = add<Core::Timer>(500, [this] {
@@ -80,10 +82,10 @@ void ProcessStateWidget::refresh()
 
     auto& data = active_process_data.value();
 
-    m_pid_label->set_text(String::format("%s(%d)", data.name.characters(), pid));
+    m_pid_label->set_text(String::formatted("{}({})", data.name, pid));
     m_state_label->set_text(data.threads.first().state);
-    m_cpu_label->set_text(String::format("%d", data.threads.first().times_scheduled));
-    m_memory_label->set_text(String::format("%d", data.amount_resident));
+    m_cpu_label->set_text(String::formatted("{}", data.threads.first().times_scheduled));
+    m_memory_label->set_text(String::formatted("{}", data.amount_resident));
 }
 
 void ProcessStateWidget::set_tty_fd(int tty_fd)
@@ -95,4 +97,6 @@ void ProcessStateWidget::set_tty_fd(int tty_fd)
     }
     set_visible(true);
     refresh();
+}
+
 }

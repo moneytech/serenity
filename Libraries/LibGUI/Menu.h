@@ -27,7 +27,9 @@
 #pragma once
 
 #include <AK/NonnullOwnPtrVector.h>
+#include <AK/WeakPtr.h>
 #include <LibCore/Object.h>
+#include <LibGUI/Action.h>
 #include <LibGUI/Forward.h>
 #include <LibGfx/Forward.h>
 
@@ -39,36 +41,36 @@ public:
     explicit Menu(const StringView& name = "");
     virtual ~Menu() override;
 
-    void realize_menu_if_needed()
-    {
-        if (menu_id() == -1)
-            realize_menu();
-    }
+    void realize_menu_if_needed();
 
     static Menu* from_menu_id(int);
     int menu_id() const { return m_menu_id; }
 
     const String& name() const { return m_name; }
+    const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
+    void set_icon(const Gfx::Bitmap*);
 
-    Action* action_at(int);
+    Action* action_at(size_t);
 
     void add_action(NonnullRefPtr<Action>);
     void add_separator();
-    void add_submenu(NonnullRefPtr<Menu>);
+    Menu& add_submenu(const String& name);
 
-    void popup(const Gfx::Point& screen_position);
+    void popup(const Gfx::IntPoint& screen_position, const RefPtr<Action>& default_action = nullptr);
     void dismiss();
 
 private:
     friend class MenuBar;
 
-    int realize_menu();
+    int realize_menu(RefPtr<Action> default_action = nullptr);
     void unrealize_menu();
-    void realize_if_needed();
+    void realize_if_needed(const RefPtr<Action>& default_action);
 
     int m_menu_id { -1 };
     String m_name;
+    RefPtr<Gfx::Bitmap> m_icon;
     NonnullOwnPtrVector<MenuItem> m_items;
+    WeakPtr<Action> m_last_default_action;
 };
 
 }

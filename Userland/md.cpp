@@ -25,29 +25,46 @@
  */
 
 #include <AK/ByteBuffer.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
+#include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
-#include <LibMarkdown/MDDocument.h>
+#include <LibMarkdown/Document.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 int main(int argc, char* argv[])
 {
-    if (pledge("stdio rpath", nullptr) < 0) {
+    if (pledge("stdio rpath tty", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     const char* file_name = nullptr;
     bool html = false;
+    int view_width = 0;
 
-    for (int i = 1; i < argc; i++)
-        if (strcmp(argv[i], "--html") == 0)
-            html = true;
-        else
-            file_name = argv[i];
+    Core::ArgsParser args_parser;
+    args_parser.add_option(html, "Render to HTML rather than for the terminal", "html", 'H');
+    args_parser.add_option(view_width, "Viewport width for the terminal (defaults to current terminal width)", "view-width", 0, "width");
+    args_parser.add_positional_argument(file_name, "Path to Markdown file", "path", Core::ArgsParser::Required::No);
+    args_parser.parse(argc, argv);
 
+    if (!html && view_width == 0) {
+        if (isatty(STDOUT_FILENO)) {
+            struct winsize ws;
+            if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) < 0)
+                view_width = 80;
+            else
+                view_width = ws.ws_col;
+
+        } else {
+            view_width = 80;
+        }
+    }
     auto file = Core::File::construct();
-    ;
     bool success;
     if (file_name == nullptr) {
         success = file->open(STDIN_FILENO, Core::IODevice::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescription::No);
@@ -68,15 +85,14 @@ int main(int argc, char* argv[])
     auto buffer = file->read_all();
     dbg() << "Read size " << buffer.size();
 
-    String input { (const char*)buffer.data(), (size_t)buffer.size() };
-    MDDocument document;
-    success = document.parse(input);
+    auto input = String::copy(buffer);
+    auto document = Markdown::Document::parse(input);
 
-    if (!success) {
+    if (!document) {
         fprintf(stderr, "Error parsing\n");
         return 1;
     }
 
-    String res = html ? document.render_to_html() : document.render_for_terminal();
+    String res = html ? document->render_to_html() : document->render_for_terminal(view_width);
     printf("%s", res.characters());
 }

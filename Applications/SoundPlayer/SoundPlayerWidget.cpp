@@ -30,7 +30,7 @@
 #include <LibGUI/Button.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/MessageBox.h>
-#include <LibM/math.h>
+#include <math.h>
 
 SoundPlayerWidget::SoundPlayerWidget(GUI::Window& window, NonnullRefPtr<Audio::ClientConnection> connection)
     : m_window(window)
@@ -38,27 +38,27 @@ SoundPlayerWidget::SoundPlayerWidget(GUI::Window& window, NonnullRefPtr<Audio::C
     , m_manager(connection)
 {
     set_fill_with_background_color(true);
-    set_layout(make<GUI::VerticalBoxLayout>());
+    set_layout<GUI::VerticalBoxLayout>();
     layout()->set_margins({ 2, 2, 2, 2 });
 
-    auto status_widget = add<GUI::Widget>();
-    status_widget->set_fill_with_background_color(true);
-    status_widget->set_layout(make<GUI::HorizontalBoxLayout>());
+    auto& status_widget = add<GUI::Widget>();
+    status_widget.set_fill_with_background_color(true);
+    status_widget.set_layout<GUI::HorizontalBoxLayout>();
 
-    m_elapsed = status_widget->add<GUI::Label>();
+    m_elapsed = status_widget.add<GUI::Label>();
     m_elapsed->set_frame_shape(Gfx::FrameShape::Container);
     m_elapsed->set_frame_shadow(Gfx::FrameShadow::Sunken);
     m_elapsed->set_frame_thickness(2);
     m_elapsed->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
     m_elapsed->set_preferred_size(80, 0);
 
-    auto sample_widget_container = status_widget->add<GUI::Widget>();
-    sample_widget_container->set_layout(make<GUI::HorizontalBoxLayout>());
-    sample_widget_container->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+    auto& sample_widget_container = status_widget.add<GUI::Widget>();
+    sample_widget_container.set_layout<GUI::HorizontalBoxLayout>();
+    sample_widget_container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
-    m_sample_widget = sample_widget_container->add<SampleWidget>();
+    m_sample_widget = sample_widget_container.add<SampleWidget>();
 
-    m_remaining = status_widget->add<GUI::Label>();
+    m_remaining = status_widget.add<GUI::Label>();
     m_remaining->set_frame_shape(Gfx::FrameShape::Container);
     m_remaining->set_frame_shadow(Gfx::FrameShadow::Sunken);
     m_remaining->set_frame_thickness(2);
@@ -70,25 +70,25 @@ SoundPlayerWidget::SoundPlayerWidget(GUI::Window& window, NonnullRefPtr<Audio::C
     m_slider->set_enabled(false);
     m_slider->on_knob_released = [&](int value) { m_manager.seek(denormalize_rate(value)); };
 
-    auto control_widget = add<GUI::Widget>();
-    control_widget->set_fill_with_background_color(true);
-    control_widget->set_layout(make<GUI::HorizontalBoxLayout>());
-    control_widget->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    control_widget->set_preferred_size(0, 30);
-    control_widget->layout()->set_margins({ 10, 2, 10, 2 });
-    control_widget->layout()->set_spacing(10);
+    auto& control_widget = add<GUI::Widget>();
+    control_widget.set_fill_with_background_color(true);
+    control_widget.set_layout<GUI::HorizontalBoxLayout>();
+    control_widget.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+    control_widget.set_preferred_size(0, 30);
+    control_widget.layout()->set_margins({ 10, 2, 10, 2 });
+    control_widget.layout()->set_spacing(10);
 
-    m_play = control_widget->add<GUI::Button>();
+    m_play = control_widget.add<GUI::Button>();
     m_play->set_icon(*m_pause_icon);
     m_play->set_enabled(false);
-    m_play->on_click = [this](GUI::Button& button) {
-        button.set_icon(m_manager.toggle_pause() ? *m_play_icon : *m_pause_icon);
+    m_play->on_click = [this](auto) {
+        m_play->set_icon(m_manager.toggle_pause() ? *m_play_icon : *m_pause_icon);
     };
 
-    m_stop = control_widget->add<GUI::Button>();
+    m_stop = control_widget.add<GUI::Button>();
     m_stop->set_enabled(false);
     m_stop->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/stop.png"));
-    m_stop->on_click = [&](GUI::Button&) { m_manager.stop(); };
+    m_stop->on_click = [this](auto) { m_manager.stop(); };
 
     m_status = add<GUI::Label>();
     m_status->set_frame_shape(Gfx::FrameShape::Box);
@@ -120,17 +120,14 @@ void SoundPlayerWidget::hide_scope(bool hide)
 void SoundPlayerWidget::open_file(String path)
 {
     if (!path.ends_with(".wav")) {
-        GUI::MessageBox::show("Selected file is not a \".wav\" file!", "Filetype error", GUI::MessageBox::Type::Error);
+        GUI::MessageBox::show(window(), "Selected file is not a \".wav\" file!", "Filetype error", GUI::MessageBox::Type::Error);
         return;
     }
 
     OwnPtr<Audio::WavLoader> loader = make<Audio::WavLoader>(path);
     if (loader->has_error()) {
-        GUI::MessageBox::show(
-            String::format(
-                "Failed to load WAV file: %s (%s)",
-                path.characters(),
-                loader->error_string()),
+        GUI::MessageBox::show(window(),
+            String::formatted("Failed to load WAV file: {} ({})", path, loader->error_string()),
             "Filetype error", GUI::MessageBox::Type::Error);
         return;
     }
@@ -142,12 +139,11 @@ void SoundPlayerWidget::open_file(String path)
     m_play->set_enabled(true);
     m_stop->set_enabled(true);
 
-    m_window.set_title(String::format("SoundPlayer - \"%s\"", loader->file()->filename().characters()));
-    m_status->set_text(String::format(
-        "Sample rate %uHz, %u %s, %u bits per sample",
+    m_window.set_title(String::formatted("{} - SoundPlayer", loader->file()->filename()));
+    m_status->set_text(String::formatted(
+        "Sample rate {}Hz, {} channel(s), {} bits per sample",
         loader->sample_rate(),
         loader->num_channels(),
-        (loader->num_channels() == 1) ? "channel" : "channels",
         loader->bits_per_sample()));
 
     m_manager.set_loader(move(loader));
@@ -177,14 +173,14 @@ void SoundPlayerWidget::update_position(const int position)
     float seconds = (total_norm_samples / static_cast<float>(PLAYBACK_MANAGER_RATE));
     float remaining_seconds = m_manager.total_length() - seconds;
 
-    m_elapsed->set_text(String::format(
-        "Elapsed:\n%u:%02u.%02u",
+    m_elapsed->set_text(String::formatted(
+        "Elapsed:\n{}:{:02}.{:02}",
         static_cast<int>(seconds / 60),
         static_cast<int>(seconds) % 60,
         static_cast<int>(seconds * 100) % 100));
 
-    m_remaining->set_text(String::format(
-        "Remaining:\n%u:%02u.%02u",
+    m_remaining->set_text(String::formatted(
+        "Remaining:\n{}:{:02}.{:02}",
         static_cast<int>(remaining_seconds / 60),
         static_cast<int>(remaining_seconds) % 60,
         static_cast<int>(remaining_seconds * 100) % 100));

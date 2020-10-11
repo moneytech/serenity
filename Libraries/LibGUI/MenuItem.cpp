@@ -37,7 +37,7 @@ MenuItem::MenuItem(unsigned menu_id, Type type)
 {
 }
 
-MenuItem::MenuItem(unsigned menu_id, NonnullRefPtr<Action>&& action)
+MenuItem::MenuItem(unsigned menu_id, NonnullRefPtr<Action> action)
     : m_type(Type::Action)
     , m_menu_id(menu_id)
     , m_action(move(action))
@@ -49,7 +49,7 @@ MenuItem::MenuItem(unsigned menu_id, NonnullRefPtr<Action>&& action)
         m_checked = m_action->is_checked();
 }
 
-MenuItem::MenuItem(unsigned menu_id, NonnullRefPtr<Menu>&& submenu)
+MenuItem::MenuItem(unsigned menu_id, NonnullRefPtr<Menu> submenu)
     : m_type(Type::Submenu)
     , m_menu_id(menu_id)
     , m_submenu(move(submenu))
@@ -79,13 +79,22 @@ void MenuItem::set_checked(bool checked)
     update_window_server();
 }
 
+void MenuItem::set_default(bool is_default)
+{
+    ASSERT(is_checkable());
+    if (m_default == is_default)
+        return;
+    m_default = is_default;
+    update_window_server();
+}
+
 void MenuItem::update_window_server()
 {
     if (m_menu_id < 0)
         return;
     auto& action = *m_action;
     auto shortcut_text = action.shortcut().is_valid() ? action.shortcut().to_string() : String();
-    WindowServerConnection::the().send_sync<Messages::WindowServer::UpdateMenuItem>(m_menu_id, m_identifier, -1, action.text(), action.is_enabled(), action.is_checkable(), action.is_checkable() ? action.is_checked() : false, shortcut_text);
+    WindowServerConnection::the().send_sync<Messages::WindowServer::UpdateMenuItem>(m_menu_id, m_identifier, -1, action.text(), action.is_enabled(), action.is_checkable(), action.is_checkable() ? action.is_checked() : false, m_default, shortcut_text);
 }
 
 void MenuItem::set_menu_id(Badge<Menu>, unsigned int menu_id)

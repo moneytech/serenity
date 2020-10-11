@@ -25,6 +25,8 @@
  */
 
 #include <AK/Assertions.h>
+#include <AK/LogStream.h>
+#include <AK/Time.h>
 #include <Kernel/CMOS.h>
 #include <Kernel/RTC.h>
 
@@ -47,68 +49,7 @@ static bool update_in_progress()
     return CMOS::read(0x0a) & 0x80;
 }
 
-inline bool is_leap_year(unsigned year)
-{
-    return ((year % 4 == 0) && ((year % 100 != 0) || (year % 400) == 0));
-}
-
-static unsigned days_in_months_since_start_of_year(unsigned month, unsigned year)
-{
-    ASSERT(month <= 11);
-    unsigned days = 0;
-    switch (month) {
-    case 11:
-        days += 30;
-        [[fallthrough]];
-    case 10:
-        days += 31;
-        [[fallthrough]];
-    case 9:
-        days += 30;
-        [[fallthrough]];
-    case 8:
-        days += 31;
-        [[fallthrough]];
-    case 7:
-        days += 31;
-        [[fallthrough]];
-    case 6:
-        days += 30;
-        [[fallthrough]];
-    case 5:
-        days += 31;
-        [[fallthrough]];
-    case 4:
-        days += 30;
-        [[fallthrough]];
-    case 3:
-        days += 31;
-        [[fallthrough]];
-    case 2:
-        if (is_leap_year(year))
-            days += 29;
-        else
-            days += 28;
-        [[fallthrough]];
-    case 1:
-        days += 31;
-    }
-    return days;
-}
-
-static unsigned days_in_years_since_epoch(unsigned year)
-{
-    unsigned days = 0;
-    while (year > 1969) {
-        days += 365;
-        if (is_leap_year(year))
-            ++days;
-        --year;
-    }
-    return days;
-}
-
-u8 bcd_to_binary(u8 bcd)
+static u8 bcd_to_binary(u8 bcd)
 {
     return (bcd & 0x0F) + ((bcd >> 4) * 10);
 }
@@ -127,17 +68,22 @@ void read_registers(unsigned& year, unsigned& month, unsigned& day, unsigned& ho
     month = CMOS::read(0x08);
     year = CMOS::read(0x09);
 
+    bool is_pm = hour & 0x80;
+
     if (!(status_b & 0x04)) {
         second = bcd_to_binary(second);
         minute = bcd_to_binary(minute);
-        hour = bcd_to_binary(hour & 0x70);
+        hour = bcd_to_binary(hour & 0x7F);
         day = bcd_to_binary(day);
         month = bcd_to_binary(month);
         year = bcd_to_binary(year);
     }
 
-    if (!(status_b & 0x02) && (hour & 0x80)) {
-        hour = ((hour & 0x7F) + 12) % 24;
+    if (!(status_b & 0x02)) {
+        // In the 12 hour clock, midnight and noon are 12, not 0. Map it to 0.
+        hour %= 12;
+        if (is_pm)
+            hour += 12;
     }
 
     year += 2000;
@@ -154,16 +100,12 @@ time_t now()
     unsigned year, month, day, hour, minute, second;
     read_registers(year, month, day, hour, minute, second);
 
-    kprintf("year: %d, month: %d, day: %d\n", year, month, day);
+    klog() << "RTC: Year: " << year << ", month: " << month << ", day: " << day << ", hour: " << hour << ", minute: " << minute << ", second: " << second;
 
     ASSERT(year >= 2018);
 
-    return days_in_years_since_epoch(year - 1) * 86400
-        + days_in_months_since_start_of_year(month - 1, year) * 86400
-        + (day - 1) * 86400
-        + hour * 3600
-        + minute * 60
-        + second;
+    time_t days_since_epoch = years_to_days_since_epoch(year) + day_of_year(year, month, day);
+    return ((days_since_epoch * 24 + hour) * 60 + minute) * 60 + second;
 }
 
 }

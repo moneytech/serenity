@@ -42,26 +42,29 @@ public:
     static KResultOr<NonnullRefPtr<Socket>> create(int type);
     virtual ~LocalSocket() override;
 
-    static void for_each(Function<void(LocalSocket&)>);
+    KResult sendfd(const FileDescription& socket_description, FileDescription& passing_description);
+    KResultOr<NonnullRefPtr<FileDescription>> recvfd(const FileDescription& socket_description);
+
+    static void for_each(Function<void(const LocalSocket&)>);
 
     StringView socket_path() const;
     String absolute_path(const FileDescription& description) const override;
 
     // ^Socket
-    virtual KResult bind(const sockaddr*, socklen_t) override;
-    virtual KResult connect(FileDescription&, const sockaddr*, socklen_t, ShouldBlock = ShouldBlock::Yes) override;
-    virtual KResult listen(int) override;
+    virtual KResult bind(Userspace<const sockaddr*>, socklen_t) override;
+    virtual KResult connect(FileDescription&, Userspace<const sockaddr*>, socklen_t, ShouldBlock = ShouldBlock::Yes) override;
+    virtual KResult listen(size_t) override;
     virtual void get_local_address(sockaddr*, socklen_t*) override;
     virtual void get_peer_address(sockaddr*, socklen_t*) override;
     virtual void attach(FileDescription&) override;
     virtual void detach(FileDescription&) override;
-    virtual bool can_read(const FileDescription&) const override;
-    virtual bool can_write(const FileDescription&) const override;
-    virtual ssize_t sendto(FileDescription&, const void*, size_t, int, const sockaddr*, socklen_t) override;
-    virtual ssize_t recvfrom(FileDescription&, void*, size_t, int flags, sockaddr*, socklen_t*) override;
-    virtual KResult getsockopt(FileDescription&, int level, int option, void*, socklen_t*) override;
-    virtual KResult chown(uid_t, gid_t) override;
-    virtual KResult chmod(mode_t) override;
+    virtual bool can_read(const FileDescription&, size_t) const override;
+    virtual bool can_write(const FileDescription&, size_t) const override;
+    virtual KResultOr<size_t> sendto(FileDescription&, const UserOrKernelBuffer&, size_t, int, Userspace<const sockaddr*>, socklen_t) override;
+    virtual KResultOr<size_t> recvfrom(FileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, timeval&) override;
+    virtual KResult getsockopt(FileDescription&, int level, int option, Userspace<void*>, Userspace<socklen_t*>) override;
+    virtual KResult chown(FileDescription&, uid_t, gid_t) override;
+    virtual KResult chmod(FileDescription&, mode_t) override;
 
 private:
     explicit LocalSocket(int type);
@@ -71,6 +74,8 @@ private:
     static Lockable<InlineLinkedList<LocalSocket>>& all_sockets();
     DoubleBuffer& receive_buffer_for(FileDescription&);
     DoubleBuffer& send_buffer_for(FileDescription&);
+    NonnullRefPtrVector<FileDescription>& sendfd_queue_for(const FileDescription&);
+    NonnullRefPtrVector<FileDescription>& recvfd_queue_for(const FileDescription&);
 
     // An open socket file on the filesystem.
     RefPtr<FileDescription> m_file;
@@ -99,6 +104,9 @@ private:
 
     DoubleBuffer m_for_client;
     DoubleBuffer m_for_server;
+
+    NonnullRefPtrVector<FileDescription> m_fds_for_client;
+    NonnullRefPtrVector<FileDescription> m_fds_for_server;
 
     // for InlineLinkedList
     LocalSocket* m_prev { nullptr };

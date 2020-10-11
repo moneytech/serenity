@@ -29,19 +29,20 @@
 #include <AK/Types.h>
 #include <AK/Vector.h>
 #include <LibCore/ElapsedTimer.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 struct Result {
     u64 write_bps;
     u64 read_bps;
 };
 
-Result average_result(const Vector<Result>& results)
+static Result average_result(const Vector<Result>& results)
 {
     Result average;
 
@@ -56,13 +57,13 @@ Result average_result(const Vector<Result>& results)
     return average;
 }
 
-void exit_with_usage(int rc)
+static void exit_with_usage(int rc)
 {
     fprintf(stderr, "Usage: disk_benchmark [-h] [-d directory] [-t time_per_benchmark] [-f file_size1,file_size2,...] [-b block_size1,block_size2,...]\n");
     exit(rc);
 }
 
-Result benchmark(const String& filename, int file_size, int block_size, ByteBuffer& buffer, bool allow_cache);
+static Result benchmark(const String& filename, int file_size, int block_size, ByteBuffer& buffer, bool allow_cache);
 
 int main(int argc, char** argv)
 {
@@ -128,7 +129,7 @@ int main(int argc, char** argv)
                 usleep(100);
             }
             auto average = average_result(results);
-            printf("\nFinished: runs=%d time=%dms write_bps=%llu read_bps=%llu\n", results.size(), timer.elapsed(), average.write_bps, average.read_bps);
+            printf("\nFinished: runs=%zu time=%dms write_bps=%llu read_bps=%llu\n", results.size(), timer.elapsed(), average.write_bps, average.read_bps);
 
             sleep(1);
         }

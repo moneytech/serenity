@@ -26,10 +26,31 @@
 
 #include <AK/Badge.h>
 #include <AK/SharedBuffer.h>
+#include <Clipboard/ClipboardClientEndpoint.h>
+#include <Clipboard/ClipboardServerEndpoint.h>
 #include <LibGUI/Clipboard.h>
-#include <LibGUI/WindowServerConnection.h>
+#include <LibIPC/ServerConnection.h>
 
 namespace GUI {
+
+class ClipboardServerConnection : public IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>
+    , public ClipboardClientEndpoint {
+    C_OBJECT(ClipboardServerConnection);
+
+public:
+    virtual void handshake() override
+    {
+        auto response = send_sync<Messages::ClipboardServer::Greet>();
+        set_my_client_id(response->client_id());
+    }
+
+private:
+    ClipboardServerConnection()
+        : IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>(*this, "/tmp/portal/clipboard")
+    {
+    }
+    virtual void handle(const Messages::ClipboardClient::ClipboardDataChanged&) override;
+};
 
 Clipboard& Clipboard::the()
 {
@@ -39,50 +60,109 @@ Clipboard& Clipboard::the()
     return *s_the;
 }
 
+ClipboardServerConnection* s_connection;
+
+static ClipboardServerConnection& connection()
+{
+    return *s_connection;
+}
+
+void Clipboard::initialize(Badge<Application>)
+{
+    s_connection = &ClipboardServerConnection::construct().leak_ref();
+}
+
 Clipboard::Clipboard()
 {
 }
 
 Clipboard::DataAndType Clipboard::data_and_type() const
 {
-    auto response = WindowServerConnection::the().send_sync<Messages::WindowServer::GetClipboardContents>();
-    if (response->shared_buffer_id() < 0)
+    auto response = connection().send_sync<Messages::ClipboardServer::GetClipboardData>();
+    if (response->shbuf_id() < 0)
         return {};
-    auto shared_buffer = SharedBuffer::create_from_shared_buffer_id(response->shared_buffer_id());
+    auto shared_buffer = SharedBuffer::create_from_shbuf_id(response->shbuf_id());
     if (!shared_buffer) {
         dbgprintf("GUI::Clipboard::data() failed to attach to the shared buffer\n");
         return {};
     }
-    if (response->content_size() > shared_buffer->size()) {
+    if (response->data_size() > shared_buffer->size()) {
         dbgprintf("GUI::Clipboard::data() clipping contents size is greater than shared buffer size\n");
         return {};
     }
-    auto data = String((const char*)shared_buffer->data(), response->content_size());
-    auto type = response->content_type();
-    return { data, type };
+    auto data = ByteBuffer::copy(shared_buffer->data<void>(), response->data_size());
+    auto type = response->mime_type();
+    auto metadata = response->metadata().entries();
+    return { data, type, metadata };
 }
 
-void Clipboard::set_data(const StringView& data, const String& type)
+void Clipboard::set_data(ReadonlyBytes data, const String& type, const HashMap<String, String>& metadata)
 {
-    auto shared_buffer = SharedBuffer::create_with_size(data.length() + 1);
+    auto shared_buffer = SharedBuffer::create_with_size(data.size());
     if (!shared_buffer) {
         dbgprintf("GUI::Clipboard::set_data() failed to create a shared buffer\n");
         return;
     }
     if (!data.is_empty())
-        memcpy(shared_buffer->data(), data.characters_without_null_termination(), data.length() + 1);
-    else
-        ((u8*)shared_buffer->data())[0] = '\0';
+        memcpy(shared_buffer->data<void>(), data.data(), data.size());
     shared_buffer->seal();
-    shared_buffer->share_with(WindowServerConnection::the().server_pid());
+    shared_buffer->share_with(connection().server_pid());
 
-    WindowServerConnection::the().send_sync<Messages::WindowServer::SetClipboardContents>(shared_buffer->shared_buffer_id(), data.length(), type);
+    connection().send_sync<Messages::ClipboardServer::SetClipboardData>(shared_buffer->shbuf_id(), data.size(), type, metadata);
 }
 
-void Clipboard::did_receive_clipboard_contents_changed(Badge<WindowServerConnection>, const String& data_type)
+void ClipboardServerConnection::handle(const Messages::ClipboardClient::ClipboardDataChanged& message)
 {
-    if (on_content_change)
-        on_content_change(data_type);
+    auto& clipboard = Clipboard::the();
+    if (clipboard.on_change)
+        clipboard.on_change(message.mime_type());
+}
+
+RefPtr<Gfx::Bitmap> Clipboard::bitmap() const
+{
+    auto clipping = data_and_type();
+
+    if (clipping.mime_type != "image/x-serenityos")
+        return nullptr;
+
+    auto width = clipping.metadata.get("width").value_or("0").to_uint();
+    if (!width.has_value() || width.value() == 0)
+        return nullptr;
+
+    auto height = clipping.metadata.get("height").value_or("0").to_uint();
+    if (!height.has_value() || height.value() == 0)
+        return nullptr;
+
+    auto pitch = clipping.metadata.get("pitch").value_or("0").to_uint();
+    if (!pitch.has_value() || pitch.value() == 0)
+        return nullptr;
+
+    auto format = clipping.metadata.get("format").value_or("0").to_uint();
+    if (!format.has_value() || format.value() == 0)
+        return nullptr;
+
+    auto clipping_bitmap = Gfx::Bitmap::create_wrapper((Gfx::BitmapFormat)format.value(), { (int)width.value(), (int)height.value() }, pitch.value(), clipping.data.data());
+    auto bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA32, { (int)width.value(), (int)height.value() });
+
+    for (int y = 0; y < clipping_bitmap->height(); ++y) {
+        for (int x = 0; x < clipping_bitmap->width(); ++x) {
+            auto pixel = clipping_bitmap->get_pixel(x, y);
+            bitmap->set_pixel(x, y, pixel);
+        }
+    }
+
+    return bitmap;
+}
+
+void Clipboard::set_bitmap(const Gfx::Bitmap& bitmap)
+{
+    HashMap<String, String> metadata;
+    metadata.set("width", String::number(bitmap.width()));
+    metadata.set("height", String::number(bitmap.height()));
+    metadata.set("format", String::number((int)bitmap.format()));
+    metadata.set("pitch", String::number(bitmap.pitch()));
+    metadata.set("bpp", String::number(bitmap.bpp()));
+    set_data({ bitmap.scanline(0), bitmap.size_in_bytes() }, "image/x-serenityos", metadata);
 }
 
 }

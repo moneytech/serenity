@@ -40,15 +40,16 @@ HashMap<pid_t, Core::ProcessStatistics> ProcessStatisticsReader::get_all()
 {
     auto file = Core::File::construct("/proc/all");
     if (!file->open(Core::IODevice::ReadOnly)) {
-        fprintf(stderr, "CProcessStatisticsReader: Failed to open /proc/all: %s\n", file->error_string());
+        fprintf(stderr, "ProcessStatisticsReader: Failed to open /proc/all: %s\n", file->error_string());
         return {};
     }
 
     HashMap<pid_t, Core::ProcessStatistics> map;
 
     auto file_contents = file->read_all();
-    auto json = JsonValue::from_string({ file_contents.data(), (size_t)file_contents.size() });
-    json.as_array().for_each([&](auto& value) {
+    auto json = JsonValue::from_string(file_contents);
+    ASSERT(json.has_value());
+    json.value().as_array().for_each([&](auto& value) {
         const JsonObject& process_object = value.as_object();
         Core::ProcessStatistics process;
 
@@ -84,6 +85,7 @@ HashMap<pid_t, Core::ProcessStatistics> ProcessStatisticsReader::get_all()
             thread.name = thread_object.get("name").to_string();
             thread.state = thread_object.get("state").to_string();
             thread.ticks = thread_object.get("ticks").to_u32();
+            thread.cpu = thread_object.get("cpu").to_u32();
             thread.priority = thread_object.get("priority").to_u32();
             thread.effective_priority = thread_object.get("effective_priority").to_u32();
             thread.syscall_count = thread_object.get("syscall_count").to_u32();

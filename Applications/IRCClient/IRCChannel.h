@@ -27,10 +27,9 @@
 #pragma once
 
 #include "IRCLogBuffer.h"
-#include <AK/String.h>
-#include <AK/CircularQueue.h>
-#include <AK/RefPtr.h>
 #include <AK/RefCounted.h>
+#include <AK/RefPtr.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 
 class IRCClient;
@@ -53,8 +52,6 @@ public:
     void add_message(char prefix, const String& name, const String& text, Color = Color::Black);
     void add_message(const String& text, Color = Color::Black);
 
-    void dump() const;
-
     void say(const String&);
 
     const IRCLogBuffer& log() const { return *m_log; }
@@ -68,6 +65,7 @@ public:
 
     void handle_join(const String& nick, const String& hostmask);
     void handle_part(const String& nick, const String& hostmask);
+    void handle_quit(const String& nick, const String& hostmask, const String& message);
     void handle_topic(const String& nick, const String& topic);
 
     IRCWindow& window() { return *m_window; }

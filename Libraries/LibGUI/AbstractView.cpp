@@ -26,7 +26,6 @@
 
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
-#include <Kernel/KeyCode.h>
 #include <LibGUI/AbstractView.h>
 #include <LibGUI/DragOperation.h>
 #include <LibGUI/Model.h>
@@ -38,15 +37,18 @@
 namespace GUI {
 
 AbstractView::AbstractView()
-    : m_selection(*this)
+    : m_sort_order(SortOrder::Ascending)
+    , m_selection(*this)
 {
 }
 
 AbstractView::~AbstractView()
 {
+    if (m_model)
+        m_model->unregister_view({}, *this);
 }
 
-void AbstractView::set_model(RefPtr<Model>&& model)
+void AbstractView::set_model(RefPtr<Model> model)
 {
     if (model == m_model)
         return;
@@ -55,13 +57,46 @@ void AbstractView::set_model(RefPtr<Model>&& model)
     m_model = move(model);
     if (m_model)
         m_model->register_view({}, *this);
-    did_update_model();
+    did_update_model(GUI::Model::InvalidateAllIndexes);
+    scroll_to_top();
 }
 
-void AbstractView::did_update_model()
+void AbstractView::did_update_model(unsigned flags)
 {
-    if (!model() || selection().first() != m_edit_index)
-        stop_editing();
+    // FIXME: It's unfortunate that we lose so much view state when the model updates in any way.
+    stop_editing();
+    m_edit_index = {};
+    m_hovered_index = {};
+    if (!model() || (flags & GUI::Model::InvalidateAllIndexes)) {
+        clear_selection();
+    } else {
+        selection().remove_matching([this](auto& index) { return !model()->is_valid(index); });
+    }
+}
+
+void AbstractView::clear_selection()
+{
+    m_selection.clear();
+}
+
+void AbstractView::set_selection(const ModelIndex& new_index)
+{
+    m_selection.set(new_index);
+}
+
+void AbstractView::add_selection(const ModelIndex& new_index)
+{
+    m_selection.add(new_index);
+}
+
+void AbstractView::remove_selection(const ModelIndex& new_index)
+{
+    m_selection.remove(new_index);
+}
+
+void AbstractView::toggle_selection(const ModelIndex& new_index)
+{
+    m_selection.toggle(new_index);
 }
 
 void AbstractView::did_update_selection()
@@ -101,7 +136,7 @@ void AbstractView::begin_editing(const ModelIndex& index)
     ASSERT(aid_create_editing_delegate);
     m_editing_delegate = aid_create_editing_delegate(index);
     m_editing_delegate->bind(*model(), index);
-    m_editing_delegate->set_value(model()->data(index, Model::Role::Display));
+    m_editing_delegate->set_value(index.data());
     m_edit_widget = m_editing_delegate->widget();
     add_child(*m_edit_widget);
     m_edit_widget->move_to_back();
@@ -114,27 +149,23 @@ void AbstractView::begin_editing(const ModelIndex& index)
         model()->set_data(m_edit_index, m_editing_delegate->value());
         stop_editing();
     };
+    m_editing_delegate->on_rollback = [this] {
+        ASSERT(model());
+        stop_editing();
+    };
 }
 
 void AbstractView::stop_editing()
 {
+    bool take_back_focus = false;
     m_edit_index = {};
     if (m_edit_widget) {
+        take_back_focus = m_edit_widget->is_focused();
         remove_child(*m_edit_widget);
         m_edit_widget = nullptr;
     }
-}
-
-void AbstractView::select_all()
-{
-    ASSERT(model());
-    int rows = model()->row_count();
-    int columns = model()->column_count();
-
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < columns; ++j)
-            selection().add(model()->index(i, j));
-    }
+    if (take_back_focus)
+        set_focus(true);
 }
 
 void AbstractView::activate(const ModelIndex& index)
@@ -166,13 +197,10 @@ NonnullRefPtr<Gfx::Font> AbstractView::font_for_index(const ModelIndex& index) c
     if (!model())
         return font();
 
-    auto font_data = model()->data(index, Model::Role::Font);
+    auto font_data = index.data(ModelRole::Font);
     if (font_data.is_font())
         return font_data.as_font();
 
-    auto column_metadata = model()->column_metadata(index.column());
-    if (column_metadata.font)
-        return *column_metadata.font;
     return font();
 }
 
@@ -190,22 +218,44 @@ void AbstractView::mousedown_event(MouseEvent& event)
     m_might_drag = false;
 
     if (!index.is_valid()) {
-        m_selection.clear();
+        clear_selection();
     } else if (event.modifiers() & Mod_Ctrl) {
-        m_selection.toggle(index);
+        set_cursor(index, SelectionUpdate::Ctrl);
     } else if (event.button() == MouseButton::Left && m_selection.contains(index) && !m_model->drag_data_type().is_null()) {
         // We might be starting a drag, so don't throw away other selected items yet.
         m_might_drag = true;
+    } else if (event.button() == MouseButton::Right) {
+        set_cursor(index, SelectionUpdate::ClearIfNotSelected);
     } else {
-        m_selection.set(index);
+        set_cursor(index, SelectionUpdate::Set);
     }
 
     update();
 }
 
+void AbstractView::set_hovered_index(const ModelIndex& index)
+{
+    if (m_hovered_index == index)
+        return;
+    m_hovered_index = index;
+    update();
+}
+
+void AbstractView::leave_event(Core::Event& event)
+{
+    ScrollableWidget::leave_event(event);
+    set_hovered_index({});
+}
+
 void AbstractView::mousemove_event(MouseEvent& event)
 {
-    if (!model() || !m_might_drag)
+    if (!model())
+        return ScrollableWidget::mousemove_event(event);
+
+    auto hovered_index = index_at_event_position(event.position());
+    set_hovered_index(hovered_index);
+
+    if (!m_might_drag)
         return ScrollableWidget::mousemove_event(event);
 
     if (!(event.buttons() & MouseButton::Left) || m_selection.is_empty()) {
@@ -232,19 +282,19 @@ void AbstractView::mousemove_event(MouseEvent& event)
     StringBuilder data_builder;
     bool first = true;
     m_selection.for_each_index([&](auto& index) {
-        auto text_data = m_model->data(index);
+        auto text_data = index.data();
         if (!first)
             text_builder.append(", ");
         text_builder.append(text_data.to_string());
 
-        auto drag_data = m_model->data(index, Model::Role::DragData);
+        auto drag_data = index.data(ModelRole::DragData);
         data_builder.append(drag_data.to_string());
         data_builder.append('\n');
 
         first = false;
 
         if (!bitmap) {
-            Variant icon_data = model()->data(index, Model::Role::Icon);
+            Variant icon_data = index.data(ModelRole::Icon);
             if (icon_data.is_icon())
                 bitmap = icon_data.as_icon().bitmap_for_size(32);
         }
@@ -282,12 +332,15 @@ void AbstractView::mouseup_event(MouseEvent& event)
         // Since we're here, it was not that; so fix up the selection now.
         auto index = index_at_event_position(event.position());
         if (index.is_valid())
-            m_selection.set(index);
+            set_selection(index);
         else
-            m_selection.clear();
+            clear_selection();
         m_might_drag = false;
         update();
     }
+
+    if (activates_on_selection())
+        activate_selected();
 }
 
 void AbstractView::doubleclick_event(MouseEvent& event)
@@ -303,11 +356,14 @@ void AbstractView::doubleclick_event(MouseEvent& event)
     auto index = index_at_event_position(event.position());
 
     if (!index.is_valid())
-        m_selection.clear();
+        clear_selection();
     else if (!m_selection.contains(index))
-        m_selection.set(index);
+        set_selection(index);
 
-    activate_selected();
+    if (is_editable() && edit_triggers() & EditTrigger::DoubleClicked)
+        begin_editing(cursor_index());
+    else
+        activate(cursor_index());
 }
 
 void AbstractView::context_menu_event(ContextMenuEvent& event)
@@ -318,9 +374,9 @@ void AbstractView::context_menu_event(ContextMenuEvent& event)
     auto index = index_at_event_position(event.position());
 
     if (index.is_valid())
-        m_selection.add(index);
+        add_selection(index);
     else
-        selection().clear();
+        clear_selection();
 
     if (on_context_menu_request)
         on_context_menu_request(index, event);
@@ -334,11 +390,136 @@ void AbstractView::drop_event(DropEvent& event)
         return;
 
     auto index = index_at_event_position(event.position());
-    if (!index.is_valid())
-        return;
-
     if (on_drop)
         on_drop(index, event);
+}
+
+void AbstractView::set_multi_select(bool multi_select)
+{
+    if (m_multi_select == multi_select)
+        return;
+    m_multi_select = multi_select;
+    if (!multi_select && m_selection.size() > 1) {
+        auto first_selected = m_selection.first();
+        m_selection.clear();
+        m_selection.set(first_selected);
+    }
+}
+
+void AbstractView::set_key_column_and_sort_order(int column, SortOrder sort_order)
+{
+    m_key_column = column;
+    m_sort_order = sort_order;
+
+    if (model())
+        model()->sort(column, sort_order);
+
+    update();
+}
+
+void AbstractView::set_cursor(ModelIndex index, SelectionUpdate selection_update, bool scroll_cursor_into_view)
+{
+    if (!model() || !index.is_valid()) {
+        m_cursor_index = {};
+        return;
+    }
+
+    if (model()->is_valid(index)) {
+        if (selection_update == SelectionUpdate::Set)
+            set_selection(index);
+        else if (selection_update == SelectionUpdate::Ctrl)
+            toggle_selection(index);
+        else if (selection_update == SelectionUpdate::ClearIfNotSelected) {
+            if (!m_selection.contains(index))
+                clear_selection();
+        }
+
+        // FIXME: Support the other SelectionUpdate types
+
+        m_cursor_index = index;
+
+        if (scroll_cursor_into_view) {
+            // FIXME: We should scroll into view both vertically *and* horizontally.
+            scroll_into_view(index, false, true);
+        }
+        update();
+    }
+}
+
+void AbstractView::set_edit_triggers(unsigned triggers)
+{
+    m_edit_triggers = triggers;
+}
+
+void AbstractView::hide_event(HideEvent& event)
+{
+    stop_editing();
+    ScrollableWidget::hide_event(event);
+}
+
+void AbstractView::keydown_event(KeyEvent& event)
+{
+    if (event.key() == KeyCode::Key_F2) {
+        if (is_editable() && edit_triggers() & EditTrigger::EditKeyPressed) {
+            begin_editing(cursor_index());
+            event.accept();
+            return;
+        }
+    }
+
+    if (event.key() == KeyCode::Key_Return) {
+        activate_selected();
+        event.accept();
+        return;
+    }
+
+    SelectionUpdate selection_update = SelectionUpdate::Set;
+    if (event.modifiers() == KeyModifier::Mod_Shift) {
+        selection_update = SelectionUpdate::Shift;
+    }
+
+    if (event.key() == KeyCode::Key_Left) {
+        move_cursor(CursorMovement::Left, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_Right) {
+        move_cursor(CursorMovement::Right, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_Up) {
+        move_cursor(CursorMovement::Up, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_Down) {
+        move_cursor(CursorMovement::Down, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_Home) {
+        move_cursor(CursorMovement::Home, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_End) {
+        move_cursor(CursorMovement::End, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_PageUp) {
+        move_cursor(CursorMovement::PageUp, selection_update);
+        event.accept();
+        return;
+    }
+    if (event.key() == KeyCode::Key_PageDown) {
+        move_cursor(CursorMovement::PageDown, selection_update);
+        event.accept();
+        return;
+    }
+
+    Widget::keydown_event(event);
 }
 
 }

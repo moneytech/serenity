@@ -27,7 +27,7 @@
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-
+#include <ctype.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -42,10 +42,9 @@ struct Count {
 
 bool output_line = false;
 bool output_byte = false;
-bool output_character = false;
 bool output_word = false;
 
-void wc_out(Count& count)
+static void wc_out(Count& count)
 {
     if (output_line)
         printf("%7i ", count.lines);
@@ -53,13 +52,11 @@ void wc_out(Count& count)
         printf("%7i ", count.words);
     if (output_byte)
         printf("%7lu ", count.bytes);
-    if (output_character)
-        printf("%7i ", count.characters);
 
     printf("%14s\n", count.name.characters());
 }
 
-Count get_count(const String& file_name)
+static Count get_count(const String& file_name)
 {
     Count count;
     FILE* file_pointer = nullptr;
@@ -74,41 +71,22 @@ Count get_count(const String& file_name)
             return count;
         }
     }
-    bool tab_flag = false;
-    bool space_flag = false;
-    bool line_flag = true;
-    int current_character;
-    while ((current_character = fgetc(file_pointer)) != EOF) {
-        count.characters++;
-        if (current_character >= 'A' && current_character <= 'z' && (space_flag || line_flag || tab_flag)) {
+    bool start_a_new_word = true;
+    for (int ch = fgetc(file_pointer); ch != EOF; ch = fgetc(file_pointer)) {
+        count.bytes++;
+        if (isspace(ch)) {
+            start_a_new_word = true;
+        } else if (start_a_new_word) {
+            start_a_new_word = false;
             count.words++;
-            space_flag = false;
-            line_flag = false;
-            tab_flag = false;
         }
-        switch (current_character) {
-        case '\n':
+        if (ch == '\n')
             count.lines++;
-            line_flag = true;
-            break;
-        case ' ':
-            space_flag = true;
-            break;
-        case '\t':
-            tab_flag = true;
-            break;
-        }
-    }
-    fclose(file_pointer);
-    if (file_pointer != stdin) {
-        struct stat st;
-        stat(file_name.characters(), &st);
-        count.bytes = st.st_size;
     }
     return count;
 }
 
-Count get_total_count(Vector<Count>& counts)
+static Count get_total_count(Vector<Count>& counts)
 {
     Count total_count { "total" };
     for (auto& count : counts) {

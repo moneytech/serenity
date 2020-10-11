@@ -59,11 +59,12 @@ private:
     virtual void handle(const Messages::WindowClient::KeyUp&) override;
     virtual void handle(const Messages::WindowClient::WindowActivated&) override;
     virtual void handle(const Messages::WindowClient::WindowDeactivated&) override;
+    virtual void handle(const Messages::WindowClient::WindowInputEntered&) override;
+    virtual void handle(const Messages::WindowClient::WindowInputLeft&) override;
     virtual void handle(const Messages::WindowClient::WindowCloseRequest&) override;
     virtual void handle(const Messages::WindowClient::WindowResized&) override;
     virtual void handle(const Messages::WindowClient::MenuItemActivated&) override;
     virtual void handle(const Messages::WindowClient::ScreenRectChanged&) override;
-    virtual void handle(const Messages::WindowClient::ClipboardContentsChanged&) override;
     virtual void handle(const Messages::WindowClient::WM_WindowRemoved&) override;
     virtual void handle(const Messages::WindowClient::WM_WindowStateChanged&) override;
     virtual void handle(const Messages::WindowClient::WM_WindowIconBitmapChanged&) override;
@@ -74,6 +75,10 @@ private:
     virtual void handle(const Messages::WindowClient::DragCancelled&) override;
     virtual void handle(const Messages::WindowClient::UpdateSystemTheme&) override;
     virtual void handle(const Messages::WindowClient::WindowStateChanged&) override;
+    virtual void handle(const Messages::WindowClient::DisplayLinkNotification&) override;
+    virtual void handle(const Messages::WindowClient::Ping&) override;
+
+    bool m_display_link_notification_pending { false };
 };
 
 }

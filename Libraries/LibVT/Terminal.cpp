@@ -25,7 +25,9 @@
  */
 
 #include <AK/StringBuilder.h>
+#include <AK/StringView.h>
 #include <LibVT/Terminal.h>
+#include <string.h>
 
 //#define TERMINAL_DEBUG
 
@@ -40,73 +42,21 @@ Terminal::~Terminal()
 {
 }
 
-Terminal::Line::Line(u16 length)
-{
-    set_length(length);
-}
-
-Terminal::Line::~Line()
-{
-    delete[] characters;
-    delete[] attributes;
-}
-
-void Terminal::Line::set_length(u16 new_length)
-{
-    if (m_length == new_length)
-        return;
-    auto* new_characters = new u8[new_length];
-    auto* new_attributes = new Attribute[new_length];
-    memset(new_characters, ' ', new_length);
-    if (characters && attributes) {
-        memcpy(new_characters, characters, min(m_length, new_length));
-        memcpy(new_attributes, attributes, min(m_length, new_length) * sizeof(Attribute));
-    }
-    delete[] characters;
-    delete[] attributes;
-    characters = new_characters;
-    attributes = new_attributes;
-    m_length = new_length;
-}
-
-void Terminal::Line::clear(Attribute attribute)
-{
-    if (dirty) {
-        memset(characters, ' ', m_length);
-        for (u16 i = 0; i < m_length; ++i)
-            attributes[i] = attribute;
-        return;
-    }
-    for (unsigned i = 0; i < m_length; ++i) {
-        if (characters[i] != ' ')
-            dirty = true;
-        characters[i] = ' ';
-    }
-    for (unsigned i = 0; i < m_length; ++i) {
-        if (attributes[i] != attribute)
-            dirty = true;
-        attributes[i] = attribute;
-    }
-}
-
-bool Terminal::Line::has_only_one_background_color() const
-{
-    if (!m_length)
-        return true;
-    // FIXME: Cache this result?
-    auto color = attributes[0].background_color;
-    for (size_t i = 1; i < m_length; ++i) {
-        if (attributes[i].background_color != color)
-            return false;
-    }
-    return true;
-}
-
 void Terminal::clear()
 {
     for (size_t i = 0; i < rows(); ++i)
-        line(i).clear(m_current_attribute);
+        m_lines[i].clear(m_current_attribute);
     set_cursor(0, 0);
+}
+
+void Terminal::clear_including_history()
+{
+    m_history.clear();
+    m_history_start = 0;
+
+    clear();
+
+    m_client.terminal_history_changed();
 }
 
 inline bool is_valid_parameter_character(u8 ch)
@@ -143,9 +93,9 @@ void Terminal::alter_mode(bool should_set, bool question_param, const ParamVecto
             // Hide cursor command, but doesn't need to be run (for now, because
             // we don't do inverse control codes anyways)
             if (should_set)
-                dbgprintf("Terminal: Hide Cursor escapecode recieved. Not needed: ignored.\n");
+                dbgprintf("Terminal: Hide Cursor escapecode received. Not needed: ignored.\n");
             else
-                dbgprintf("Terminal: Show Cursor escapecode recieved. Not needed: ignored.\n");
+                dbgprintf("Terminal: Show Cursor escapecode received. Not needed: ignored.\n");
             break;
         default:
             break;
@@ -172,13 +122,37 @@ void Terminal::SGR(const ParamVector& params)
         m_current_attribute.reset();
         return;
     }
-    if (params.size() == 3 && params[1] == 5) {
-        if (params[0] == 38) {
-            m_current_attribute.foreground_color = params[2];
-            return;
-        } else if (params[0] == 48) {
-            m_current_attribute.background_color = params[2];
-            return;
+    if (params.size() >= 3) {
+        bool should_set = true;
+        auto kind = params[1];
+        u32 color = 0;
+        switch (kind) {
+        case 5: // 8-bit
+            color = xterm_colors[params[2]];
+            break;
+        case 2: // 24-bit
+            for (size_t i = 0; i < 3; ++i) {
+                u8 component = 0;
+                if (params.size() - 2 > i) {
+                    component = params[i + 2];
+                }
+                color <<= 8;
+                color |= component;
+            }
+            break;
+        default:
+            should_set = false;
+            break;
+        }
+
+        if (should_set) {
+            if (params[0] == 38) {
+                m_current_attribute.foreground_color = color;
+                return;
+            } else if (params[0] == 48) {
+                m_current_attribute.background_color = color;
+                return;
+            }
         }
     }
     for (auto param : params) {
@@ -228,7 +202,7 @@ void Terminal::SGR(const ParamVector& params)
             // Foreground color
             if (m_current_attribute.flags & Attribute::Bold)
                 param += 8;
-            m_current_attribute.foreground_color = param - 30;
+            m_current_attribute.foreground_color = xterm_colors[param - 30];
             break;
         case 39:
             // reset foreground
@@ -245,7 +219,7 @@ void Terminal::SGR(const ParamVector& params)
             // Background color
             if (m_current_attribute.flags & Attribute::Bold)
                 param += 8;
-            m_current_attribute.background_color = param - 40;
+            m_current_attribute.background_color = xterm_colors[param - 40];
             break;
         case 49:
             // reset background
@@ -389,7 +363,7 @@ void Terminal::escape$b(const ParamVector& params)
         return;
 
     for (unsigned i = 0; i < params[0]; ++i)
-        put_character_at(m_cursor_row, m_cursor_column++, m_last_char);
+        put_character_at(m_cursor_row, m_cursor_column++, m_last_code_point);
 }
 
 void Terminal::escape$d(const ParamVector& params)
@@ -561,38 +535,63 @@ void Terminal::escape$P(const ParamVector& params)
     if (num == 0)
         num = 1;
 
-    auto& line = this->line(m_cursor_row);
+    auto& line = m_lines[m_cursor_row];
 
     // Move n characters of line to the left
-    for (int i = m_cursor_column; i < line.m_length - num; i++)
-        line.characters[i] = line.characters[i + num];
+    for (int i = m_cursor_column; i < line.length() - num; i++)
+        line.set_code_point(i, line.code_point(i + num));
 
     // Fill remainder of line with blanks
-    for (int i = line.m_length - num; i < line.m_length; i++)
-        line.characters[i] = ' ';
+    for (int i = line.length() - num; i < line.length(); i++)
+        line.set_code_point(i, ' ');
 
-    line.dirty = true;
+    line.set_dirty(true);
 }
 
 void Terminal::execute_xterm_command()
 {
-    m_final = '@';
-    bool ok;
-    unsigned value = String::copy(m_xterm_param1).to_uint(ok);
-    if (ok) {
-        switch (value) {
-        case 0:
-        case 1:
-        case 2:
-            m_client.set_window_title(String::copy(m_xterm_param2));
-            break;
-        default:
-            unimplemented_xterm_escape();
-            break;
-        }
+    ParamVector numeric_params;
+    auto param_string = String::copy(m_xterm_parameters);
+    auto params = param_string.split(';', true);
+    m_xterm_parameters.clear_with_capacity();
+    for (auto& parampart : params)
+        numeric_params.append(parampart.to_uint().value_or(0));
+
+    while (params.size() < 3) {
+        params.append(String::empty());
+        numeric_params.append(0);
     }
-    m_xterm_param1.clear_with_capacity();
-    m_xterm_param2.clear_with_capacity();
+
+    m_final = '@';
+
+    if (numeric_params.is_empty()) {
+        dbg() << "Empty Xterm params?";
+        return;
+    }
+
+    switch (numeric_params[0]) {
+    case 0:
+    case 1:
+    case 2:
+        m_client.set_window_title(params[1]);
+        break;
+    case 8:
+        if (params[2].is_empty()) {
+            m_current_attribute.href = String();
+            m_current_attribute.href_id = String();
+        } else {
+            m_current_attribute.href = params[2];
+            // FIXME: Respect the provided ID
+            m_current_attribute.href_id = String::format("%u", m_next_href_id++);
+        }
+        break;
+    case 9:
+        m_client.set_window_progress(numeric_params[1], numeric_params[2]);
+        break;
+    default:
+        unimplemented_xterm_escape();
+        break;
+    }
 }
 
 void Terminal::execute_escape_sequence(u8 final)
@@ -607,15 +606,14 @@ void Terminal::execute_escape_sequence(u8 final)
     }
     auto paramparts = String::copy(m_parameters).split(';');
     for (auto& parampart : paramparts) {
-        bool ok;
-        unsigned value = parampart.to_uint(ok);
-        if (!ok) {
+        auto value = parampart.to_uint();
+        if (!value.has_value()) {
             // FIXME: Should we do something else?
             m_parameters.clear_with_capacity();
             m_intermediates.clear_with_capacity();
             return;
         }
-        params.append(value);
+        params.append(value.value());
     }
 
 #if defined(TERMINAL_DEBUG)
@@ -703,6 +701,9 @@ void Terminal::execute_escape_sequence(u8 final)
     case 'f':
         HVP(params);
         break;
+    case 'n':
+        DSR(params);
+        break;
     default:
         dbgprintf("Terminal::execute_escape_sequence: Unhandled final '%c'\n", final);
         break;
@@ -712,8 +713,12 @@ void Terminal::execute_escape_sequence(u8 final)
     dbgprintf("\n");
     for (auto& line : m_lines) {
         dbgprintf("Terminal: Line: ");
-        for (int i = 0; i < line.m_length; i++) {
-            dbgprintf("%c", line.characters[i]);
+        for (int i = 0; i < line.length(); i++) {
+            u32 codepoint = line.code_point(i);
+            if (codepoint < 128)
+                dbgprintf("%c", (char)codepoint);
+            else
+                dbgprintf("<U+%04x>", codepoint);
         }
         dbgprintf("\n");
     }
@@ -740,9 +745,7 @@ void Terminal::scroll_up()
     invalidate_cursor();
     if (m_scroll_region_top == 0) {
         auto line = move(m_lines.ptr_at(m_scroll_region_top));
-        m_history.append(move(line));
-        while (m_history.size() > max_history_size())
-            m_history.take_first();
+        add_line_to_history(move(line));
         m_client.terminal_history_changed();
     }
     m_lines.remove(m_scroll_region_top);
@@ -774,17 +777,17 @@ void Terminal::set_cursor(unsigned a_row, unsigned a_column)
     invalidate_cursor();
 }
 
-void Terminal::put_character_at(unsigned row, unsigned column, u8 ch)
+void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
 {
     ASSERT(row < rows());
     ASSERT(column < columns());
-    auto& line = this->line(row);
-    line.characters[column] = ch;
-    line.attributes[column] = m_current_attribute;
-    line.attributes[column].flags |= Attribute::Touched;
-    line.dirty = true;
+    auto& line = m_lines[row];
+    line.set_code_point(column, code_point);
+    line.attributes()[column] = m_current_attribute;
+    line.attributes()[column].flags |= Attribute::Touched;
+    line.set_dirty(true);
 
-    m_last_char = ch;
+    m_last_code_point = code_point;
 }
 
 void Terminal::NEL()
@@ -805,98 +808,157 @@ void Terminal::RI()
     CUU({});
 }
 
-void Terminal::on_char(u8 ch)
+void Terminal::DSR(const ParamVector& params)
+{
+    if (params.size() == 1 && params[0] == 5) {
+        // Device status
+        emit_string("\033[0n"); // Terminal status OK!
+    } else if (params.size() == 1 && params[0] == 6) {
+        // Cursor position query
+        emit_string(String::format("\033[%d;%dR", m_cursor_row + 1, m_cursor_column + 1));
+    } else {
+        dbg() << "Unknown DSR";
+    }
+}
+
+void Terminal::on_input(u8 ch)
 {
 #ifdef TERMINAL_DEBUG
     dbgprintf("Terminal::on_char: %b (%c), fg=%u, bg=%u\n", ch, ch, m_current_attribute.foreground_color, m_current_attribute.background_color);
 #endif
-    switch (m_escape_state) {
+
+    auto fail_utf8_parse = [this] {
+        m_parser_state = Normal;
+        on_code_point('%');
+    };
+
+    auto advance_utf8_parse = [this, ch] {
+        m_parser_code_point <<= 6;
+        m_parser_code_point |= ch & 0x3f;
+        if (m_parser_state == UTF8Needs1Byte) {
+            on_code_point(m_parser_code_point);
+            m_parser_state = Normal;
+        } else {
+            m_parser_state = (ParserState)(m_parser_state + 1);
+        }
+    };
+
+    switch (m_parser_state) {
     case GotEscape:
         if (ch == '[') {
-            m_escape_state = ExpectParameter;
+            m_parser_state = ExpectParameter;
         } else if (ch == '(') {
             m_swallow_current = true;
-            m_escape_state = ExpectParameter;
+            m_parser_state = ExpectParameter;
         } else if (ch == ']') {
-            m_escape_state = ExpectXtermParameter1;
+            m_parser_state = ExpectXtermParameter;
+            m_xterm_parameters.clear_with_capacity();
         } else if (ch == '#') {
-            m_escape_state = ExpectHashtagDigit;
+            m_parser_state = ExpectHashtagDigit;
         } else if (ch == 'D') {
             IND();
-            m_escape_state = Normal;
+            m_parser_state = Normal;
             return;
         } else if (ch == 'M') {
             RI();
-            m_escape_state = Normal;
+            m_parser_state = Normal;
             return;
         } else if (ch == 'E') {
             NEL();
-            m_escape_state = Normal;
+            m_parser_state = Normal;
             return;
         } else {
             dbg() << "Unexpected character in GotEscape '" << (char)ch << "'";
-            m_escape_state = Normal;
+            m_parser_state = Normal;
         }
         return;
     case ExpectHashtagDigit:
         if (ch >= '0' && ch <= '9') {
             execute_hashtag(ch);
-            m_escape_state = Normal;
+            m_parser_state = Normal;
         }
-        break;
-    case ExpectXtermParameter1:
-        if (ch != ';') {
-            m_xterm_param1.append(ch);
-            return;
-        }
-        m_escape_state = ExpectXtermParameter2;
         return;
-    case ExpectXtermParameter2:
-        if (ch != '\007') {
-            m_xterm_param2.append(ch);
+    case ExpectXtermParameter:
+        if (ch == 27) {
+            m_parser_state = ExpectStringTerminator;
             return;
         }
-        m_escape_state = ExpectXtermFinal;
-        [[fallthrough]];
-    case ExpectXtermFinal:
-        m_escape_state = Normal;
-        if (ch == '\007')
+        if (ch == 7) {
             execute_xterm_command();
+            m_parser_state = Normal;
+            return;
+        }
+        m_xterm_parameters.append(ch);
+        return;
+    case ExpectStringTerminator:
+        if (ch == '\\')
+            execute_xterm_command();
+        else
+            dbg() << "Unexpected string terminator: " << String::format("%02x", ch);
+        m_parser_state = Normal;
         return;
     case ExpectParameter:
         if (is_valid_parameter_character(ch)) {
             m_parameters.append(ch);
             return;
         }
-        m_escape_state = ExpectIntermediate;
+        m_parser_state = ExpectIntermediate;
         [[fallthrough]];
     case ExpectIntermediate:
         if (is_valid_intermediate_character(ch)) {
             m_intermediates.append(ch);
             return;
         }
-        m_escape_state = ExpectFinal;
+        m_parser_state = ExpectFinal;
         [[fallthrough]];
     case ExpectFinal:
         if (is_valid_final_character(ch)) {
-            m_escape_state = Normal;
+            m_parser_state = Normal;
             if (!m_swallow_current)
                 execute_escape_sequence(ch);
             m_swallow_current = false;
             return;
         }
-        m_escape_state = Normal;
+        m_parser_state = Normal;
         m_swallow_current = false;
         return;
+    case UTF8Needs1Byte:
+    case UTF8Needs2Bytes:
+    case UTF8Needs3Bytes:
+        if ((ch & 0xc0) != 0x80) {
+            fail_utf8_parse();
+        } else {
+            advance_utf8_parse();
+        }
+        return;
+
     case Normal:
-        break;
+        if (!(ch & 0x80))
+            break;
+        if ((ch & 0xe0) == 0xc0) {
+            m_parser_state = UTF8Needs1Byte;
+            m_parser_code_point = ch & 0x1f;
+            return;
+        }
+        if ((ch & 0xf0) == 0xe0) {
+            m_parser_state = UTF8Needs2Bytes;
+            m_parser_code_point = ch & 0x0f;
+            return;
+        }
+        if ((ch & 0xf8) == 0xf0) {
+            m_parser_state = UTF8Needs3Bytes;
+            m_parser_code_point = ch & 0x07;
+            return;
+        }
+        fail_utf8_parse();
+        return;
     }
 
     switch (ch) {
     case '\0':
         return;
     case '\033':
-        m_escape_state = GotEscape;
+        m_parser_state = GotEscape;
         m_swallow_current = false;
         return;
     case 8: // Backspace
@@ -925,34 +987,123 @@ void Terminal::on_char(u8 ch)
         return;
     }
 
+    on_code_point(ch);
+}
+
+void Terminal::on_code_point(u32 code_point)
+{
     auto new_column = m_cursor_column + 1;
     if (new_column < columns()) {
-        put_character_at(m_cursor_row, m_cursor_column, ch);
+        put_character_at(m_cursor_row, m_cursor_column, code_point);
         set_cursor(m_cursor_row, new_column);
+        return;
+    }
+    if (m_stomp) {
+        m_stomp = false;
+        newline();
+        put_character_at(m_cursor_row, m_cursor_column, code_point);
+        set_cursor(m_cursor_row, 1);
     } else {
-        if (m_stomp) {
-            m_stomp = false;
-            newline();
-            put_character_at(m_cursor_row, m_cursor_column, ch);
-            set_cursor(m_cursor_row, 1);
-        } else {
-            // Curious: We wait once on the right-hand side
-            m_stomp = true;
-            put_character_at(m_cursor_row, m_cursor_column, ch);
-        }
+        // Curious: We wait once on the right-hand side
+        m_stomp = true;
+        put_character_at(m_cursor_row, m_cursor_column, code_point);
     }
 }
 
 void Terminal::inject_string(const StringView& str)
 {
     for (size_t i = 0; i < str.length(); ++i)
-        on_char(str[i]);
+        on_input(str[i]);
 }
 
-void Terminal::emit_string(const StringView& str)
+void Terminal::emit_string(const StringView& string)
 {
-    for (size_t i = 0; i < str.length(); ++i)
-        m_client.emit_char(str[i]);
+    m_client.emit((const u8*)string.characters_without_null_termination(), string.length());
+}
+
+void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
+{
+    bool ctrl = flags & Mod_Ctrl;
+    bool alt = flags & Mod_Alt;
+    bool shift = flags & Mod_Shift;
+    unsigned modifier_mask = int(shift) + (int(alt) << 1) + (int(ctrl) << 2);
+
+    auto emit_final_with_modifier = [this, modifier_mask](char final) {
+        if (modifier_mask)
+            emit_string(String::format("\e[1;%d%c", modifier_mask + 1, final));
+        else
+            emit_string(String::format("\e[%c", final));
+    };
+    auto emit_tilde_with_modifier = [this, modifier_mask](unsigned num) {
+        if (modifier_mask)
+            emit_string(String::format("\e[%d;%d~", num, modifier_mask + 1));
+        else
+            emit_string(String::format("\e[%d~", num));
+    };
+
+    switch (key) {
+    case KeyCode::Key_Up:
+        emit_final_with_modifier('A');
+        return;
+    case KeyCode::Key_Down:
+        emit_final_with_modifier('B');
+        return;
+    case KeyCode::Key_Right:
+        emit_final_with_modifier('C');
+        return;
+    case KeyCode::Key_Left:
+        emit_final_with_modifier('D');
+        return;
+    case KeyCode::Key_Insert:
+        emit_tilde_with_modifier(2);
+        return;
+    case KeyCode::Key_Delete:
+        emit_tilde_with_modifier(3);
+        return;
+    case KeyCode::Key_Home:
+        emit_final_with_modifier('H');
+        return;
+    case KeyCode::Key_End:
+        emit_final_with_modifier('F');
+        return;
+    case KeyCode::Key_PageUp:
+        emit_tilde_with_modifier(5);
+        return;
+    case KeyCode::Key_PageDown:
+        emit_tilde_with_modifier(6);
+        return;
+    default:
+        break;
+    }
+
+    if (!code_point) {
+        // Probably a modifier being pressed.
+        return;
+    }
+
+    if (shift && key == KeyCode::Key_Tab) {
+        emit_string("\033[Z");
+        return;
+    }
+
+    // Key event was not one of the above special cases,
+    // attempt to treat it as a character...
+    if (ctrl) {
+        if (code_point >= 'a' && code_point <= 'z') {
+            code_point = code_point - 'a' + 1;
+        } else if (code_point == '\\') {
+            code_point = 0x1c;
+        }
+    }
+
+    // Alt modifier sends escape prefix.
+    if (alt)
+        emit_string("\033");
+
+    StringBuilder sb;
+    sb.append_code_point(code_point);
+
+    emit_string(sb.to_string());
 }
 
 void Terminal::unimplemented_escape()
@@ -961,12 +1112,12 @@ void Terminal::unimplemented_escape()
     builder.appendf("((Unimplemented escape: %c", m_final);
     if (!m_parameters.is_empty()) {
         builder.append(" parameters:");
-        for (int i = 0; i < m_parameters.size(); ++i)
+        for (size_t i = 0; i < m_parameters.size(); ++i)
             builder.append((char)m_parameters[i]);
     }
     if (!m_intermediates.is_empty()) {
         builder.append(" intermediates:");
-        for (int i = 0; i < m_intermediates.size(); ++i)
+        for (size_t i = 0; i < m_intermediates.size(); ++i)
             builder.append((char)m_intermediates[i]);
     }
     builder.append("))");
@@ -1025,7 +1176,7 @@ void Terminal::set_size(u16 columns, u16 rows)
 
 void Terminal::invalidate_cursor()
 {
-    line(m_cursor_row).dirty = true;
+    m_lines[m_cursor_row].set_dirty(true);
 }
 
 void Terminal::execute_hashtag(u8 hashtag)
@@ -1042,6 +1193,18 @@ void Terminal::execute_hashtag(u8 hashtag)
     default:
         dbg() << "Unknown hashtag: '" << hashtag << "'";
     }
+}
+
+Attribute Terminal::attribute_at(const Position& position) const
+{
+    if (!position.is_valid())
+        return {};
+    if (position.row() >= static_cast<int>(line_count()))
+        return {};
+    auto& line = this->line(position.row());
+    if (position.column() >= line.length())
+        return {};
+    return line.attributes()[position.column()];
 }
 
 }

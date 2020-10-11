@@ -27,7 +27,9 @@
 #include <AK/ByteBuffer.h>
 #include <Kernel/Devices/GPTPartitionTable.h>
 
-#define GPT_DEBUG
+#ifndef GPT_DEBUG
+#    define GPT_DEBUG
+#endif
 
 namespace Kernel {
 
@@ -47,18 +49,19 @@ const GPTPartitionHeader& GPTPartitionTable::header() const
 
 bool GPTPartitionTable::initialize()
 {
-    if (!m_device->read_block(1, m_cached_header)) {
+    auto header_buffer = UserOrKernelBuffer::for_kernel_buffer(m_cached_header);
+    if (!m_device->read_block(1, header_buffer)) {
         return false;
     }
 
     auto& header = this->header();
 
 #ifdef GPT_DEBUG
-    kprintf("GPTPartitionTable::initialize: gpt_signature=%#x%x\n", header.sig[1], header.sig[0]);
+    klog() << "GPTPartitionTable::initialize: gpt_signature=0x" << String::format("%x", header.sig[1]) << String::format("%x", header.sig[0]);
 #endif
 
     if (header.sig[0] != GPT_SIGNATURE && header.sig[1] != GPT_SIGNATURE2) {
-        kprintf("GPTPartitionTable::initialize: bad GPT signature %#x%x\n", header.sig[1], header.sig[0]);
+        klog() << "GPTPartitionTable::initialize: bad GPT signature 0x" << String::format("%x", header.sig[1]) << String::format("%x", header.sig[0]);
         return false;
     }
 
@@ -73,31 +76,32 @@ RefPtr<DiskPartition> GPTPartitionTable::partition(unsigned index)
     unsigned lba = header.partition_array_start_lba + (((index - 1) * header.partition_entry_size) / BytesPerSector);
 
     if (header.sig[0] != GPT_SIGNATURE) {
-        kprintf("GPTPartitionTable::initialize: bad gpt signature - not initalized? %#x\n", header.sig);
+        klog() << "GPTPartitionTable::initialize: bad gpt signature - not initialized? 0x" << String::format("%x", header.sig);
         return nullptr;
     }
 
     u8 entries_per_sector = BytesPerSector / header.partition_entry_size;
 
     GPTPartitionEntry entries[entries_per_sector];
-    this->m_device->read_blocks(lba, 1, (u8*)&entries);
+    auto entries_buffer = UserOrKernelBuffer::for_kernel_buffer((u8*)&entries);
+    this->m_device->read_blocks(lba, 1, entries_buffer);
     GPTPartitionEntry& entry = entries[((index - 1) % entries_per_sector)];
 
 #ifdef GPT_DEBUG
-    kprintf("GPTPartitionTable::partition %d\n", index);
-    kprintf("GPTPartitionTable - offset = %d%d\n", entry.first_lba[1], entry.first_lba[0]);
+    klog() << "GPTPartitionTable::partition " << index;
+    klog() << "GPTPartitionTable - offset = " << entry.first_lba[1] << entry.first_lba[0];
 #endif
 
     if (entry.first_lba[0] == 0x00) {
 #ifdef GPT_DEBUG
-        kprintf("GPTPartitionTable::partition: missing partition requested index=%d\n", index);
+        klog() << "GPTPartitionTable::partition: missing partition requested index=" << index;
 #endif
 
         return nullptr;
     }
 
 #ifdef GPT_DEBUG
-    kprintf("GPTPartitionTable::partition: found partition index=%d type=%x-%x-%x-%x\n", index, entry.partition_guid[3], entry.partition_guid[2], entry.partition_guid[1], entry.partition_guid[0]);
+    klog() << "GPTPartitionTable::partition: found partition index=" << index << " type=" << String::format("%x", entry.partition_guid[3]) << "-" << String::format("%x", entry.partition_guid[2]) << "-" << String::format("%x", entry.partition_guid[1]) << "-" << String::format("%x", entry.partition_guid[0]);
 #endif
     return DiskPartition::create(m_device, entry.first_lba[0], entry.last_lba[0]);
 }

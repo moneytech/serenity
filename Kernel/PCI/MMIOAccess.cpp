@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,170 +25,196 @@
  */
 
 #include <AK/Optional.h>
+#include <AK/StringView.h>
 #include <Kernel/PCI/MMIOAccess.h>
 #include <Kernel/VM/MemoryManager.h>
 
 namespace Kernel {
+namespace PCI {
+
+class MMIOSegment {
+public:
+    MMIOSegment(PhysicalAddress, u8, u8);
+    u8 get_start_bus();
+    u8 get_end_bus();
+    size_t get_size();
+    PhysicalAddress get_paddr();
+
+private:
+    PhysicalAddress m_base_addr;
+    u8 m_start_bus;
+    u8 m_end_bus;
+};
 
 #define PCI_MMIO_CONFIG_SPACE_SIZE 4096
 
-uint32_t PCI::MMIOAccess::get_segments_count()
+uint32_t MMIOAccess::segment_count() const
 {
     return m_segments.size();
 }
-uint8_t PCI::MMIOAccess::get_segment_start_bus(u32 seg)
+
+uint8_t MMIOAccess::segment_start_bus(u32 seg) const
 {
-    ASSERT(m_segments.contains(seg));
-    return m_segments.get(seg).value()->get_start_bus();
-}
-uint8_t PCI::MMIOAccess::get_segment_end_bus(u32 seg)
-{
-    ASSERT(m_segments.contains(seg));
-    return m_segments.get(seg).value()->get_end_bus();
+    auto segment = m_segments.get(seg);
+    ASSERT(segment.has_value());
+    return segment.value().get_start_bus();
 }
 
-void PCI::MMIOAccess::initialize(PhysicalAddress mcfg)
+uint8_t MMIOAccess::segment_end_bus(u32 seg) const
 {
-    if (!PCI::Access::is_initialized())
-        new PCI::MMIOAccess(mcfg);
+    auto segment = m_segments.get(seg);
+    ASSERT(segment.has_value());
+    return segment.value().get_end_bus();
 }
 
-PCI::MMIOAccess::MMIOAccess(PhysicalAddress p_mcfg)
+void MMIOAccess::initialize(PhysicalAddress mcfg)
+{
+    if (!Access::is_initialized())
+        new MMIOAccess(mcfg);
+}
+
+MMIOAccess::MMIOAccess(PhysicalAddress p_mcfg)
     : m_mcfg(p_mcfg)
-    , m_segments(*new HashMap<u16, MMIOSegment*>())
     , m_mapped_address(ChangeableAddress(0xFFFF, 0xFF, 0xFF, 0xFF))
 {
-    kprintf("PCI: Using MMIO Mechanism for PCI Configuartion Space Access\n");
+    klog() << "PCI: Using MMIO for PCI configuration space access";
     m_mmio_window_region = MM.allocate_kernel_region(PAGE_ROUND_UP(PCI_MMIO_CONFIG_SPACE_SIZE), "PCI MMIO", Region::Access::Read | Region::Access::Write);
 
     auto checkup_region = MM.allocate_kernel_region(p_mcfg.page_base(), (PAGE_SIZE * 2), "PCI MCFG Checkup", Region::Access::Read | Region::Access::Write);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Checking MCFG Table length to choose the correct mapping size\n");
+    dbg() << "PCI: Checking MCFG Table length to choose the correct mapping size";
 #endif
 
-    ACPI_RAW::SDTHeader* sdt = (ACPI_RAW::SDTHeader*)checkup_region->vaddr().offset(p_mcfg.offset_in_page().get()).as_ptr();
+    auto* sdt = (ACPI::Structures::SDTHeader*)checkup_region->vaddr().offset(p_mcfg.offset_in_page()).as_ptr();
     u32 length = sdt->length;
     u8 revision = sdt->revision;
 
-    kprintf("PCI: MCFG, length - %u, revision %d\n", length, revision);
+    klog() << "PCI: MCFG, length - " << length << ", revision " << revision;
     checkup_region->unmap();
 
     auto mcfg_region = MM.allocate_kernel_region(p_mcfg.page_base(), PAGE_ROUND_UP(length) + PAGE_SIZE, "PCI Parsing MCFG", Region::Access::Read | Region::Access::Write);
 
-    auto& mcfg = *(ACPI_RAW::MCFG*)mcfg_region->vaddr().offset(p_mcfg.offset_in_page().get()).as_ptr();
+    auto& mcfg = *(ACPI::Structures::MCFG*)mcfg_region->vaddr().offset(p_mcfg.offset_in_page()).as_ptr();
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Checking MCFG @ V 0x%x, P 0x%x\n", &mcfg, &raw_mcfg);
+    dbg() << "PCI: Checking MCFG @ V " << &mcfg << ", P 0x" << String::format("%x", p_mcfg.get());
 #endif
 
-    for (u32 index = 0; index < ((mcfg.header.length - sizeof(ACPI_RAW::MCFG)) / sizeof(ACPI_RAW::PCI_MMIO_Descriptor)); index++) {
+    for (u32 index = 0; index < ((mcfg.header.length - sizeof(ACPI::Structures::MCFG)) / sizeof(ACPI::Structures::PCI_MMIO_Descriptor)); index++) {
         u8 start_bus = mcfg.descriptors[index].start_pci_bus;
         u8 end_bus = mcfg.descriptors[index].end_pci_bus;
         u32 lower_addr = mcfg.descriptors[index].base_addr;
 
-        m_segments.set(index, new PCI::MMIOSegment(PhysicalAddress(lower_addr), start_bus, end_bus));
-        kprintf("PCI: New PCI segment @ P 0x%x, PCI buses (%d-%d)\n", lower_addr, start_bus, end_bus);
+        m_segments.set(index, { PhysicalAddress(lower_addr), start_bus, end_bus });
+        klog() << "PCI: New PCI segment @ " << PhysicalAddress(lower_addr) << ", PCI buses (" << start_bus << "-" << end_bus << ")";
     }
     mcfg_region->unmap();
-    kprintf("PCI: MMIO segments - %d\n", m_segments.size());
+    klog() << "PCI: MMIO segments - " << m_segments.size();
+
     InterruptDisabler disabler;
+
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: mapped address (%w:%b:%b.%b)\n", m_mapped_address.seg(), m_mapped_address.bus(), m_mapped_address.slot(), m_mapped_address.function());
+    dbg() << "PCI: mapped address (" << String::format("%w", m_mapped_address.seg()) << ":" << String::format("%b", m_mapped_address.bus()) << ":" << String::format("%b", m_mapped_address.slot()) << "." << String::format("%b", m_mapped_address.function()) << ")";
 #endif
     map_device(Address(0, 0, 0, 0));
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Default mapped address (%w:%b:%b.%b)\n", m_mapped_address.seg(), m_mapped_address.bus(), m_mapped_address.slot(), m_mapped_address.function());
+    dbg() << "PCI: Default mapped address (" << String::format("%w", m_mapped_address.seg()) << ":" << String::format("%b", m_mapped_address.bus()) << ":" << String::format("%b", m_mapped_address.slot()) << "." << String::format("%b", m_mapped_address.function()) << ")";
 #endif
+
+    enumerate_hardware([&](const Address& address, ID id) {
+        m_physical_ids.append({ address, id });
+    });
 }
 
-void PCI::MMIOAccess::map_device(Address address)
+void MMIOAccess::map_device(Address address)
 {
     if (m_mapped_address == address)
         return;
     // FIXME: Map and put some lock!
     ASSERT_INTERRUPTS_DISABLED();
-    ASSERT(m_segments.contains(address.seg()));
     auto segment = m_segments.get(address.seg());
-    PhysicalAddress segment_lower_addr = segment.value()->get_paddr();
+    ASSERT(segment.has_value());
+    PhysicalAddress segment_lower_addr = segment.value().get_paddr();
     PhysicalAddress device_physical_mmio_space = segment_lower_addr.offset(
-        PCI_MMIO_CONFIG_SPACE_SIZE * address.function() + (PCI_MMIO_CONFIG_SPACE_SIZE * PCI_MAX_FUNCTIONS_PER_DEVICE) * address.slot() + (PCI_MMIO_CONFIG_SPACE_SIZE * PCI_MAX_FUNCTIONS_PER_DEVICE * PCI_MAX_DEVICES_PER_BUS) * (address.bus() - segment.value()->get_start_bus()));
+        PCI_MMIO_CONFIG_SPACE_SIZE * address.function() + (PCI_MMIO_CONFIG_SPACE_SIZE * PCI_MAX_FUNCTIONS_PER_DEVICE) * address.slot() + (PCI_MMIO_CONFIG_SPACE_SIZE * PCI_MAX_FUNCTIONS_PER_DEVICE * PCI_MAX_DEVICES_PER_BUS) * (address.bus() - segment.value().get_start_bus()));
 
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Mapping device @ pci (%w:%b:%b.%b), V 0x%x, P 0x%x\n", address.seg(), address.bus(), address.slot(), address.function(), m_mmio_window_region->vaddr().get(), device_physical_mmio_space.get());
+    dbg() << "PCI: Mapping device @ pci (" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ")"
+          << " V 0x" << String::format("%x", m_mmio_window_region->vaddr().get()) << " P 0x" << String::format("%x", device_physical_mmio_space.get());
 #endif
-    m_mmio_window_region->vmobject().physical_pages()[0] = PhysicalPage::create(device_physical_mmio_space, false, false);
+    m_mmio_window_region->physical_page_slot(0) = PhysicalPage::create(device_physical_mmio_space, false, false);
     m_mmio_window_region->remap();
     m_mapped_address = address;
 }
 
-u8 PCI::MMIOAccess::read8_field(Address address, u32 field)
+u8 MMIOAccess::read8_field(Address address, u32 field)
 {
     InterruptDisabler disabler;
     ASSERT(field <= 0xfff);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Reading field %u, Address(%w:%b:%b.%b)\n", field, address.seg(), address.bus(), address.slot(), address.function());
+    dbg() << "PCI: Reading field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ")";
 #endif
     map_device(address);
     return *((u8*)(m_mmio_window_region->vaddr().get() + (field & 0xfff)));
 }
 
-u16 PCI::MMIOAccess::read16_field(Address address, u32 field)
+u16 MMIOAccess::read16_field(Address address, u32 field)
 {
     InterruptDisabler disabler;
     ASSERT(field < 0xfff);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Reading field %u, Address(%w:%b:%b.%b)\n", field, address.seg(), address.bus(), address.slot(), address.function());
+    dbg() << "PCI: Reading field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ")";
 #endif
     map_device(address);
     return *((u16*)(m_mmio_window_region->vaddr().get() + (field & 0xfff)));
 }
 
-u32 PCI::MMIOAccess::read32_field(Address address, u32 field)
+u32 MMIOAccess::read32_field(Address address, u32 field)
 {
     InterruptDisabler disabler;
     ASSERT(field <= 0xffc);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Reading field %u, Address(%w:%b:%b.%b)\n", field, address.seg(), address.bus(), address.slot(), address.function());
+    dbg() << "PCI: Reading field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ")";
 #endif
     map_device(address);
     return *((u32*)(m_mmio_window_region->vaddr().get() + (field & 0xfff)));
 }
 
-void PCI::MMIOAccess::write8_field(Address address, u32 field, u8 value)
+void MMIOAccess::write8_field(Address address, u32 field, u8 value)
 {
     InterruptDisabler disabler;
     ASSERT(field <= 0xfff);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Write to field %u, Address(%w:%b:%b.%b), value 0x%x\n", field, address.seg(), address.bus(), address.slot(), address.function(), value);
+    dbg() << "PCI: Writing to field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ") value 0x" << String::format("%x", value);
 #endif
     map_device(address);
     *((u8*)(m_mmio_window_region->vaddr().get() + (field & 0xfff))) = value;
 }
-void PCI::MMIOAccess::write16_field(Address address, u32 field, u16 value)
+void MMIOAccess::write16_field(Address address, u32 field, u16 value)
 {
     InterruptDisabler disabler;
     ASSERT(field < 0xfff);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Write to field %u, Address(%w:%b:%b.%b), value 0x%x\n", field, address.seg(), address.bus(), address.slot(), address.function(), value);
+    dbg() << "PCI: Writing to field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ") value 0x" << String::format("%x", value);
 #endif
     map_device(address);
     *((u16*)(m_mmio_window_region->vaddr().get() + (field & 0xfff))) = value;
 }
-void PCI::MMIOAccess::write32_field(Address address, u32 field, u32 value)
+void MMIOAccess::write32_field(Address address, u32 field, u32 value)
 {
     InterruptDisabler disabler;
     ASSERT(field <= 0xffc);
 #ifdef PCI_DEBUG
-    dbgprintf("PCI: Write to field %u, Address(%w:%b:%b.%b), value 0x%x\n", field, address.seg(), address.bus(), address.slot(), address.function(), value);
+    dbg() << "PCI: Writing to field " << field << ", Address(" << String::format("%w", address.seg()) << ":" << String::format("%b", address.bus()) << ":" << String::format("%b", address.slot()) << "." << String::format("%b", address.function()) << ") value 0x" << String::format("%x", value);
 #endif
     map_device(address);
     *((u32*)(m_mmio_window_region->vaddr().get() + (field & 0xfff))) = value;
 }
 
-void PCI::MMIOAccess::enumerate_all(Function<void(Address, ID)>& callback)
+void MMIOAccess::enumerate_hardware(Function<void(Address, ID)> callback)
 {
     for (u16 seg = 0; seg < m_segments.size(); seg++) {
 #ifdef PCI_DEBUG
-        dbgprintf("PCI: Enumerating Memory mapped IO segment %u\n", seg);
+        dbg() << "PCI: Enumerating Memory mapped IO segment " << seg;
 #endif
         // Single PCI host controller.
         if ((read8_field(Address(seg), PCI_HEADER_TYPE) & 0x80) == 0) {
@@ -205,29 +231,32 @@ void PCI::MMIOAccess::enumerate_all(Function<void(Address, ID)>& callback)
     }
 }
 
-PCI::MMIOSegment::MMIOSegment(PhysicalAddress segment_base_addr, u8 start_bus, u8 end_bus)
+MMIOSegment::MMIOSegment(PhysicalAddress segment_base_addr, u8 start_bus, u8 end_bus)
     : m_base_addr(segment_base_addr)
     , m_start_bus(start_bus)
     , m_end_bus(end_bus)
 {
 }
-u8 PCI::MMIOSegment::get_start_bus()
+
+u8 MMIOSegment::get_start_bus()
 {
     return m_start_bus;
 }
-u8 PCI::MMIOSegment::get_end_bus()
+
+u8 MMIOSegment::get_end_bus()
 {
     return m_end_bus;
 }
 
-size_t PCI::MMIOSegment::get_size()
+size_t MMIOSegment::get_size()
 {
     return (PCI_MMIO_CONFIG_SPACE_SIZE * PCI_MAX_FUNCTIONS_PER_DEVICE * PCI_MAX_DEVICES_PER_BUS * (get_end_bus() - get_start_bus()));
 }
 
-PhysicalAddress PCI::MMIOSegment::get_paddr()
+PhysicalAddress MMIOSegment::get_paddr()
 {
     return m_base_addr;
 }
 
+}
 }

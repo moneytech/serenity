@@ -111,8 +111,13 @@ bool Socket::connect(const SocketAddress& address)
 
     sockaddr_un saddr;
     saddr.sun_family = AF_LOCAL;
-    strcpy(saddr.sun_path, address.to_string().characters());
-
+    auto dest_address = address.to_string();
+    bool fits = dest_address.copy_characters_to_buffer(saddr.sun_path, sizeof(saddr.sun_path));
+    if (!fits) {
+        fprintf(stderr, "Core::Socket: Failed to connect() to %s: Path is too long!\n", dest_address.characters());
+        errno = EINVAL;
+        return false;
+    }
     m_destination_address = address;
 
     return common_connect((const sockaddr*)&saddr, sizeof(saddr));
@@ -120,6 +125,21 @@ bool Socket::connect(const SocketAddress& address)
 
 bool Socket::common_connect(const struct sockaddr* addr, socklen_t addrlen)
 {
+    auto connected = [this] {
+#ifdef CSOCKET_DEBUG
+        dbg() << *this << " connected!";
+#endif
+        if (!m_connected) {
+            m_connected = true;
+            ensure_read_notifier();
+            if (m_notifier) {
+                m_notifier->remove_from_parent();
+                m_notifier = nullptr;
+            }
+            if (on_connected)
+                on_connected();
+        }
+    };
     int rc = ::connect(fd(), addr, addrlen);
     if (rc < 0) {
         if (errno == EINPROGRESS) {
@@ -127,16 +147,7 @@ bool Socket::common_connect(const struct sockaddr* addr, socklen_t addrlen)
             dbg() << *this << " connection in progress (EINPROGRESS)";
 #endif
             m_notifier = Notifier::construct(fd(), Notifier::Event::Write, this);
-            m_notifier->on_ready_to_write = [this] {
-#ifdef CSOCKET_DEBUG
-                dbg() << *this << " connected!";
-#endif
-                m_connected = true;
-                ensure_read_notifier();
-                m_notifier->set_event_mask(Notifier::Event::None);
-                if (on_connected)
-                    on_connected();
-            };
+            m_notifier->on_ready_to_write = move(connected);
             return true;
         }
         int saved_errno = errno;
@@ -147,10 +158,7 @@ bool Socket::common_connect(const struct sockaddr* addr, socklen_t addrlen)
 #ifdef CSOCKET_DEBUG
     dbg() << *this << " connected ok!";
 #endif
-    m_connected = true;
-    ensure_read_notifier();
-    if (on_connected)
-        on_connected();
+    connected();
     return true;
 }
 
@@ -164,7 +172,7 @@ ByteBuffer Socket::receive(int max_size)
     return buffer;
 }
 
-bool Socket::send(const ByteBuffer& data)
+bool Socket::send(ReadonlyBytes data)
 {
     ssize_t nsent = ::send(fd(), data.data(), data.size(), 0);
     if (nsent < 0) {
@@ -178,7 +186,14 @@ bool Socket::send(const ByteBuffer& data)
 void Socket::did_update_fd(int fd)
 {
     if (fd < 0) {
-        m_read_notifier = nullptr;
+        if (m_read_notifier) {
+            m_read_notifier->remove_from_parent();
+            m_read_notifier = nullptr;
+        }
+        if (m_notifier) {
+            m_notifier->remove_from_parent();
+            m_notifier = nullptr;
+        }
         return;
     }
     if (m_connected) {
@@ -194,6 +209,8 @@ void Socket::ensure_read_notifier()
     ASSERT(m_connected);
     m_read_notifier = Notifier::construct(fd(), Notifier::Event::Read, this);
     m_read_notifier->on_ready_to_read = [this] {
+        if (!can_read())
+            return;
         if (on_ready_to_read)
             on_ready_to_read();
     };

@@ -44,7 +44,7 @@ public:
         Adopt
     };
 
-    RefPtr() {}
+    RefPtr() { }
     RefPtr(const T* ptr)
         : m_ptr(const_cast<T*>(ptr))
     {
@@ -63,28 +63,28 @@ public:
         : m_ptr(other.leak_ref())
     {
     }
-    RefPtr(const NonnullRefPtr<T>& other)
+    ALWAYS_INLINE RefPtr(const NonnullRefPtr<T>& other)
         : m_ptr(const_cast<T*>(other.ptr()))
     {
         ASSERT(m_ptr);
         m_ptr->ref();
     }
     template<typename U>
-    RefPtr(const NonnullRefPtr<U>& other)
-        : m_ptr(static_cast<T*>(const_cast<U*>(other.ptr())))
+    ALWAYS_INLINE RefPtr(const NonnullRefPtr<U>& other)
+        : m_ptr(const_cast<U*>(other.ptr()))
     {
         ASSERT(m_ptr);
         m_ptr->ref();
     }
     template<typename U>
-    RefPtr(NonnullRefPtr<U>&& other)
-        : m_ptr(static_cast<T*>(&other.leak_ref()))
+    ALWAYS_INLINE RefPtr(NonnullRefPtr<U>&& other)
+        : m_ptr(&other.leak_ref())
     {
         ASSERT(m_ptr);
     }
     template<typename U>
     RefPtr(RefPtr<U>&& other)
-        : m_ptr(static_cast<T*>(other.leak_ref()))
+        : m_ptr(other.leak_ref())
     {
     }
     RefPtr(const RefPtr& other)
@@ -94,11 +94,11 @@ public:
     }
     template<typename U>
     RefPtr(const RefPtr<U>& other)
-        : m_ptr(static_cast<T*>(const_cast<U*>(other.ptr())))
+        : m_ptr(const_cast<U*>(other.ptr()))
     {
         ref_if_not_null(m_ptr);
     }
-    ~RefPtr()
+    ALWAYS_INLINE ~RefPtr()
     {
         clear();
 #ifdef SANITIZE_PTRS
@@ -108,7 +108,7 @@ public:
             m_ptr = (T*)(0xe0e0e0e0);
 #endif
     }
-    RefPtr(std::nullptr_t) {}
+    RefPtr(std::nullptr_t) { }
 
     template<typename U>
     RefPtr(const OwnPtr<U>&) = delete;
@@ -121,7 +121,7 @@ public:
         ::swap(m_ptr, other.m_ptr);
     }
 
-    RefPtr& operator=(RefPtr&& other)
+    ALWAYS_INLINE RefPtr& operator=(RefPtr&& other)
     {
         RefPtr tmp = move(other);
         swap(tmp);
@@ -129,7 +129,7 @@ public:
     }
 
     template<typename U>
-    RefPtr& operator=(RefPtr<U>&& other)
+    ALWAYS_INLINE RefPtr& operator=(RefPtr<U>&& other)
     {
         RefPtr tmp = move(other);
         swap(tmp);
@@ -137,7 +137,7 @@ public:
     }
 
     template<typename U>
-    RefPtr& operator=(NonnullRefPtr<U>&& other)
+    ALWAYS_INLINE RefPtr& operator=(NonnullRefPtr<U>&& other)
     {
         RefPtr tmp = move(other);
         swap(tmp);
@@ -145,7 +145,7 @@ public:
         return *this;
     }
 
-    RefPtr& operator=(const NonnullRefPtr<T>& other)
+    ALWAYS_INLINE RefPtr& operator=(const NonnullRefPtr<T>& other)
     {
         RefPtr tmp = other;
         swap(tmp);
@@ -154,7 +154,7 @@ public:
     }
 
     template<typename U>
-    RefPtr& operator=(const NonnullRefPtr<U>& other)
+    ALWAYS_INLINE RefPtr& operator=(const NonnullRefPtr<U>& other)
     {
         RefPtr tmp = other;
         swap(tmp);
@@ -162,7 +162,7 @@ public:
         return *this;
     }
 
-    RefPtr& operator=(const RefPtr& other)
+    ALWAYS_INLINE RefPtr& operator=(const RefPtr& other)
     {
         RefPtr tmp = other;
         swap(tmp);
@@ -170,21 +170,21 @@ public:
     }
 
     template<typename U>
-    RefPtr& operator=(const RefPtr<U>& other)
+    ALWAYS_INLINE RefPtr& operator=(const RefPtr<U>& other)
     {
         RefPtr tmp = other;
         swap(tmp);
         return *this;
     }
 
-    RefPtr& operator=(const T* ptr)
+    ALWAYS_INLINE RefPtr& operator=(const T* ptr)
     {
         RefPtr tmp = ptr;
         swap(tmp);
         return *this;
     }
 
-    RefPtr& operator=(const T& object)
+    ALWAYS_INLINE RefPtr& operator=(const T& object)
     {
         RefPtr tmp = object;
         swap(tmp);
@@ -197,7 +197,7 @@ public:
         return *this;
     }
 
-    void clear()
+    ALWAYS_INLINE void clear()
     {
         unref_if_not_null(m_ptr);
         m_ptr = nullptr;
@@ -216,35 +216,35 @@ public:
         return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *leak_ref());
     }
 
-    T* ptr() { return m_ptr; }
-    const T* ptr() const { return m_ptr; }
+    ALWAYS_INLINE T* ptr() { return m_ptr; }
+    ALWAYS_INLINE const T* ptr() const { return m_ptr; }
 
-    T* operator->()
+    ALWAYS_INLINE T* operator->()
     {
         ASSERT(m_ptr);
         return m_ptr;
     }
 
-    const T* operator->() const
+    ALWAYS_INLINE const T* operator->() const
     {
         ASSERT(m_ptr);
         return m_ptr;
     }
 
-    T& operator*()
+    ALWAYS_INLINE T& operator*()
     {
         ASSERT(m_ptr);
         return *m_ptr;
     }
 
-    const T& operator*() const
+    ALWAYS_INLINE const T& operator*() const
     {
         ASSERT(m_ptr);
         return *m_ptr;
     }
 
-    operator const T*() const { return m_ptr; }
-    operator T*() { return m_ptr; }
+    ALWAYS_INLINE operator const T*() const { return m_ptr; }
+    ALWAYS_INLINE operator T*() { return m_ptr; }
 
     operator bool() { return !!m_ptr; }
 
@@ -278,10 +278,23 @@ inline const LogStream& operator<<(const LogStream& stream, const RefPtr<T>& val
 template<typename T>
 struct Traits<RefPtr<T>> : public GenericTraits<RefPtr<T>> {
     using PeekType = const T*;
-    static unsigned hash(const RefPtr<T>& p) { return int_hash((u32)p.ptr()); }
+    static unsigned hash(const RefPtr<T>& p) { return ptr_hash(p.ptr()); }
     static bool equals(const RefPtr<T>& a, const RefPtr<T>& b) { return a.ptr() == b.ptr(); }
 };
+
+template<typename T, typename U>
+inline NonnullRefPtr<T> static_ptr_cast(const NonnullRefPtr<U>& ptr)
+{
+    return NonnullRefPtr<T>(static_cast<const T&>(*ptr));
+}
+
+template<typename T, typename U>
+inline RefPtr<T> static_ptr_cast(const RefPtr<U>& ptr)
+{
+    return RefPtr<T>(static_cast<const T*>(ptr.ptr()));
+}
 
 }
 
 using AK::RefPtr;
+using AK::static_ptr_cast;

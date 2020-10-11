@@ -63,9 +63,9 @@ private:
     bool is_available(const Coordinate&);
     void queue_velocity(int v, int h);
     const Velocity& last_velocity() const;
-    Gfx::Rect cell_rect(const Coordinate&) const;
-    Gfx::Rect score_rect() const;
-    Gfx::Rect high_score_rect() const;
+    Gfx::IntRect cell_rect(const Coordinate&) const;
+    Gfx::IntRect score_rect() const;
+    Gfx::IntRect high_score_rect() const;
 
     int m_rows { 20 };
     int m_columns { 20 };
@@ -81,7 +81,7 @@ private:
     Coordinate m_fruit;
     int m_fruit_type { 0 };
 
-    int m_length { 0 };
+    size_t m_length { 0 };
     unsigned m_score { 0 };
     String m_score_text;
     unsigned m_high_score { 0 };

@@ -26,10 +26,12 @@
 
 #pragma once
 
+#include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/RefPtr.h>
+#include <AK/Stream.h>
 #include <AK/StringImpl.h>
-#include <AK/StringView.h>
+#include <AK/StringUtils.h>
 #include <AK/Traits.h>
 
 namespace AK {
@@ -56,17 +58,10 @@ namespace AK {
 
 class String {
 public:
-    ~String() {}
+    ~String() { }
 
-    String() {}
-
-    String(const StringView& view)
-    {
-        if (view.m_impl)
-            m_impl = *view.m_impl;
-        else
-            m_impl = StringImpl::create(view.characters_without_null_termination(), view.length());
-    }
+    String() { }
+    String(const StringView&);
 
     String(const String& other)
         : m_impl(const_cast<String&>(other).m_impl)
@@ -85,6 +80,11 @@ public:
 
     String(const char* cstring, size_t length, ShouldChomp shouldChomp = NoChomp)
         : m_impl(StringImpl::create(cstring, length, shouldChomp))
+    {
+    }
+
+    explicit String(ReadonlyBytes bytes, ShouldChomp shouldChomp = NoChomp)
+        : m_impl(StringImpl::create(bytes, shouldChomp))
     {
     }
 
@@ -108,35 +108,28 @@ public:
     {
     }
 
-    enum class CaseSensitivity {
-        CaseInsensitive,
-        CaseSensitive,
-    };
+    String(const FlyString&);
 
     static String repeated(char, size_t count);
-    bool matches(const StringView& pattern, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
+    bool matches(const StringView& mask, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
 
-    // FIXME: These should be shared between String and StringView somehow!
-    int to_int(bool& ok) const;
-    unsigned to_uint(bool& ok) const;
+    Optional<int> to_int() const;
+    Optional<unsigned> to_uint() const;
 
-    String to_lowercase() const
+    String to_lowercase() const;
+    String to_uppercase() const;
+
+#ifndef KERNEL
+    String trim_whitespace(TrimMode mode = TrimMode::Both) const
     {
-        if (!m_impl)
-            return String();
-        return m_impl->to_lowercase();
+        return StringUtils::trim_whitespace(StringView { characters(), length() }, mode);
     }
-
-    String to_uppercase() const
-    {
-        if (!m_impl)
-            return String();
-        return m_impl->to_uppercase();
-    }
+#endif
 
     bool equals_ignoring_case(const StringView&) const;
 
     bool contains(const String&) const;
+    Optional<size_t> index_of(const String&, size_t start = 0) const;
 
     Vector<String> split_limit(char separator, size_t limit, bool keep_empty = false) const;
     Vector<String> split(char separator, bool keep_empty = false) const;
@@ -146,17 +139,27 @@ public:
     StringView substring_view(size_t start, size_t length) const;
 
     bool is_null() const { return !m_impl; }
-    bool is_empty() const { return length() == 0; }
-    size_t length() const { return m_impl ? m_impl->length() : 0; }
-    const char* characters() const { return m_impl ? m_impl->characters() : nullptr; }
-    char operator[](size_t i) const
+    ALWAYS_INLINE bool is_empty() const { return length() == 0; }
+    ALWAYS_INLINE size_t length() const { return m_impl ? m_impl->length() : 0; }
+    // Includes NUL-terminator, if non-nullptr.
+    ALWAYS_INLINE const char* characters() const { return m_impl ? m_impl->characters() : nullptr; }
+
+    [[nodiscard]] bool copy_characters_to_buffer(char* buffer, size_t buffer_size) const;
+
+    ALWAYS_INLINE ReadonlyBytes bytes() const { return m_impl ? m_impl->bytes() : nullptr; }
+
+    ALWAYS_INLINE const char& operator[](size_t i) const
     {
-        ASSERT(m_impl);
         return (*m_impl)[i];
     }
 
-    bool starts_with(const StringView&) const;
-    bool ends_with(const StringView&) const;
+    using ConstIterator = SimpleIterator<const String, const char>;
+
+    constexpr ConstIterator begin() const { return ConstIterator::begin(*this); }
+    constexpr ConstIterator end() const { return ConstIterator::end(*this); }
+
+    bool starts_with(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    bool ends_with(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
     bool starts_with(char) const;
     bool ends_with(char) const;
 
@@ -165,6 +168,9 @@ public:
 
     bool operator==(const StringView&) const;
     bool operator!=(const StringView& other) const { return !(*this == other); }
+
+    bool operator==(const FlyString&) const;
+    bool operator!=(const FlyString& other) const { return !(*this == other); }
 
     bool operator<(const String&) const;
     bool operator<(const char*) const;
@@ -176,19 +182,8 @@ public:
     bool operator<=(const String& other) const { return !(*this > other); }
     bool operator<=(const char* other) const { return !(*this > other); }
 
-    bool operator==(const char* cstring) const
-    {
-        if (is_null())
-            return !cstring;
-        if (!cstring)
-            return false;
-        return !strcmp(characters(), cstring);
-    }
-
-    bool operator!=(const char* cstring) const
-    {
-        return !(*this == cstring);
-    }
+    bool operator==(const char* cstring) const;
+    bool operator!=(const char* cstring) const { return !(*this == cstring); }
 
     String isolated_copy() const;
 
@@ -208,6 +203,18 @@ public:
     {
         if (this != &other)
             m_impl = const_cast<String&>(other).m_impl;
+        return *this;
+    }
+
+    String& operator=(std::nullptr_t)
+    {
+        m_impl = nullptr;
+        return *this;
+    }
+
+    String& operator=(ReadonlyBytes bytes)
+    {
+        m_impl = StringImpl::create(bytes);
         return *this;
     }
 
@@ -231,35 +238,35 @@ public:
     }
 
     static String format(const char*, ...);
-    static String number(unsigned);
-    static String number(unsigned long);
-    static String number(unsigned long long);
-    static String number(int);
-    static String number(long);
-    static String number(long long);
 
-    StringView view() const
+    static String vformatted(StringView fmtstr, TypeErasedFormatParams);
+
+    template<typename... Parameters>
+    static String formatted(StringView fmtstr, const Parameters&... parameters)
     {
-        return { characters(), length() };
+        return vformatted(fmtstr, VariadicFormatParams { parameters... });
+    }
+
+    template<typename T>
+    static String number(T);
+
+    StringView view() const;
+
+    int replace(const String& needle, const String& replacement, bool all_occurrences = false);
+
+    template<typename T, typename... Rest>
+    bool is_one_of(const T& string, Rest... rest) const
+    {
+        if (*this == string)
+            return true;
+        return is_one_of(rest...);
     }
 
 private:
-    bool match_helper(const StringView& mask) const;
+    bool is_one_of() const { return false; }
+
     RefPtr<StringImpl> m_impl;
 };
-
-inline bool StringView::operator==(const String& string) const
-{
-    if (string.is_null())
-        return !m_characters;
-    if (!m_characters)
-        return false;
-    if (m_length != string.length())
-        return false;
-    if (m_characters == string.characters())
-        return true;
-    return !memcmp(m_characters, string.characters(), m_length);
-}
 
 template<>
 struct Traits<String> : public GenericTraits<String> {
@@ -271,42 +278,17 @@ struct CaseInsensitiveStringTraits : public AK::Traits<String> {
     static bool equals(const String& a, const String& b) { return a.to_lowercase() == b.to_lowercase(); }
 };
 
-inline bool operator<(const char* characters, const String& string)
-{
-    if (!characters)
-        return !string.is_null();
-
-    if (string.is_null())
-        return false;
-
-    return strcmp(characters, string.characters()) < 0;
-}
-
-inline bool operator>=(const char* characters, const String& string)
-{
-    return !(characters < string);
-}
-
-inline bool operator>(const char* characters, const String& string)
-{
-    if (!characters)
-        return !string.is_null();
-
-    if (string.is_null())
-        return false;
-
-    return strcmp(characters, string.characters()) > 0;
-}
-
-inline bool operator<=(const char* characters, const String& string)
-{
-    return !(characters > string);
-}
+bool operator<(const char*, const String&);
+bool operator>=(const char*, const String&);
+bool operator>(const char*, const String&);
+bool operator<=(const char*, const String&);
 
 String escape_html_entities(const StringView& html);
+
+InputStream& operator>>(InputStream& stream, String& string);
 
 }
 
 using AK::CaseInsensitiveStringTraits;
-using AK::String;
 using AK::escape_html_entities;
+using AK::String;

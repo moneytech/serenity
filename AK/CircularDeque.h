@@ -35,6 +35,24 @@ namespace AK {
 template<typename T, size_t Capacity>
 class CircularDeque : public CircularQueue<T, Capacity> {
 public:
+    void enqueue_begin(T&& value)
+    {
+        const auto new_head = (this->m_head - 1 + Capacity) % Capacity;
+        auto& slot = this->elements()[new_head];
+        if (this->m_size == Capacity)
+            slot.~T();
+        else
+            ++this->m_size;
+
+        new (&slot) T(move(value));
+        this->m_head = new_head;
+    }
+
+    void enqueue_begin(const T& value)
+    {
+        enqueue_begin(T(value));
+    }
+
     T dequeue_end()
     {
         ASSERT(!this->is_empty());

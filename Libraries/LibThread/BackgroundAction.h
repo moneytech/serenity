@@ -46,7 +46,7 @@ class BackgroundActionBase {
     friend class BackgroundAction;
 
 private:
-    BackgroundActionBase() {}
+    BackgroundActionBase() { }
 
     static Lockable<Queue<Function<void()>>>& all_actions();
     static Thread& background_thread();
@@ -65,7 +65,7 @@ public:
         return adopt(*new BackgroundAction(move(action), move(on_complete)));
     }
 
-    virtual ~BackgroundAction() {}
+    virtual ~BackgroundAction() { }
 
 private:
     BackgroundAction(Function<Result()> action, Function<void(Result)> on_complete)
@@ -75,17 +75,17 @@ private:
     {
         LOCKER(all_actions().lock());
 
-        this->ref();
         all_actions().resource().enqueue([this] {
             m_result = m_action();
             if (m_on_complete) {
-                Core::EventLoop::main().post_event(*this, make<Core::DeferredInvocationEvent>([this](auto&) {
+                Core::EventLoop::current().post_event(*this, make<Core::DeferredInvocationEvent>([this](auto&) {
                     m_on_complete(m_result.release_value());
-                    this->unref();
+                    this->remove_from_parent();
                 }));
-                Core::EventLoop::main().wake();
-            } else
-                this->unref();
+                Core::EventLoop::wake();
+            } else {
+                this->remove_from_parent();
+            }
         });
     }
 

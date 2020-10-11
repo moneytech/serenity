@@ -34,10 +34,9 @@
 
 namespace Kernel {
 
-class TCPSocket final : public IPv4Socket
-    , public Weakable<TCPSocket> {
+class TCPSocket final : public IPv4Socket {
 public:
-    static void for_each(Function<void(TCPSocket&)>);
+    static void for_each(Function<void(const TCPSocket&)>);
     static NonnullRefPtr<TCPSocket> create(int protocol);
     virtual ~TCPSocket() override;
 
@@ -149,7 +148,7 @@ public:
     u32 packets_out() const { return m_packets_out; }
     u32 bytes_out() const { return m_bytes_out; }
 
-    void send_tcp_packet(u16 flags, const void* = nullptr, size_t = 0);
+    [[nodiscard]] int send_tcp_packet(u16 flags, const UserOrKernelBuffer* = nullptr, size_t = 0);
     void send_outgoing_packets();
     void receive_tcp_packet(const TCPPacket&, u16 size);
 
@@ -165,7 +164,7 @@ public:
     void release_to_originator();
     void release_for_accept(RefPtr<TCPSocket>);
 
-    virtual void close() override;
+    virtual KResult close() override;
 
 protected:
     void set_direction(Direction direction) { m_direction = direction; }
@@ -178,8 +177,8 @@ private:
 
     virtual void shut_down_for_writing() override;
 
-    virtual int protocol_receive(const KBuffer&, void* buffer, size_t buffer_size, int flags) override;
-    virtual int protocol_send(const void*, size_t) override;
+    virtual KResultOr<size_t> protocol_receive(const KBuffer&, UserOrKernelBuffer& buffer, size_t buffer_size, int flags) override;
+    virtual KResultOr<size_t> protocol_send(const UserOrKernelBuffer&, size_t) override;
     virtual KResult protocol_connect(FileDescription&, ShouldBlock) override;
     virtual int protocol_allocate_local_port() override;
     virtual bool protocol_is_disconnected() const override;

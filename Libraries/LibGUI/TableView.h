@@ -35,10 +35,35 @@ class TableView : public AbstractTableView {
 public:
     virtual ~TableView() override;
 
+    enum class GridStyle {
+        None,
+        Horizontal,
+        Vertical,
+        Both,
+    };
+
+    enum class CursorStyle {
+        None,
+        Item,
+    };
+
+    GridStyle grid_style() const { return m_grid_style; }
+    void set_grid_style(GridStyle);
+
+    CursorStyle cursor_style() const { return m_cursor_style; }
+    void set_cursor_style(CursorStyle);
+
+    virtual void move_cursor(CursorMovement, SelectionUpdate) override;
+
 protected:
     TableView();
 
+    virtual void keydown_event(KeyEvent&) override;
     virtual void paint_event(PaintEvent&) override;
+
+private:
+    GridStyle m_grid_style { GridStyle::None };
+    CursorStyle m_cursor_style { CursorStyle::None };
 };
 
 }

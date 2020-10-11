@@ -28,7 +28,7 @@
 #include <AK/String.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
-#include <LibMarkdown/MDDocument.h>
+#include <LibMarkdown/Document.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -97,14 +97,13 @@ int main(int argc, char* argv[])
 
     dbg() << "Loading man page from " << file->filename();
     auto buffer = file->read_all();
-    String source { (const char*)buffer.data(), (size_t)buffer.size() };
+    auto source = String::copy(buffer);
 
     printf("%s(%s)\t\tSerenityOS manual\n", name, section);
 
-    MDDocument document;
-    bool success = document.parse(source);
-    ASSERT(success);
+    auto document = Markdown::Document::parse(source);
+    ASSERT(document);
 
-    String rendered = document.render_for_terminal();
+    String rendered = document->render_for_terminal();
     printf("%s", rendered.characters());
 }

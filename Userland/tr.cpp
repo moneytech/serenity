@@ -24,21 +24,26 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/String.h>
 #include <AK/QuickSort.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
+#include <LibCore/ArgsParser.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        printf("usage: tr <from> <to>");
-        return 0;
-    }
+    const char* from_chars = nullptr;
+    const char* to_chars = nullptr;
 
-    char from = argv[1][0];
-    char to = argv[2][0];
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(from_chars, "Character to translate from", "from");
+    args_parser.add_positional_argument(to_chars, "Character to translate to", "to");
+    args_parser.parse(argc, argv);
+
+    // TODO: Support multiple characters to translate from and to
+    auto from = from_chars[0];
+    auto to = to_chars[0];
 
     for (;;) {
         char ch = fgetc(stdin);

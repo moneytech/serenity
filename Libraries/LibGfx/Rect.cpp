@@ -28,15 +28,18 @@
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibGfx/Rect.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 
 namespace Gfx {
 
-void Rect::intersect(const Rect& other)
+template<typename T>
+void Rect<T>::intersect(const Rect<T>& other)
 {
-    int l = max(left(), other.left());
-    int r = min(right(), other.right());
-    int t = max(top(), other.top());
-    int b = min(bottom(), other.bottom());
+    T l = max(left(), other.left());
+    T r = min(right(), other.right());
+    T t = max(top(), other.top());
+    T b = min(bottom(), other.bottom());
 
     if (l > r || t > b) {
         m_location = {};
@@ -50,13 +53,14 @@ void Rect::intersect(const Rect& other)
     m_size.set_height((b - t) + 1);
 }
 
-Rect Rect::united(const Rect& other) const
+template<typename T>
+Rect<T> Rect<T>::united(const Rect<T>& other) const
 {
     if (is_null())
         return other;
     if (other.is_null())
         return *this;
-    Rect rect;
+    Rect<T> rect;
     rect.set_left(min(left(), other.left()));
     rect.set_top(min(top(), other.top()));
     rect.set_right(max(right(), other.right()));
@@ -64,50 +68,52 @@ Rect Rect::united(const Rect& other) const
     return rect;
 }
 
-Vector<Rect, 4> Rect::shatter(const Rect& hammer) const
+template<typename T>
+Vector<Rect<T>, 4> Rect<T>::shatter(const Rect<T>& hammer) const
 {
-    Vector<Rect, 4> pieces;
+    Vector<Rect<T>, 4> pieces;
     if (!intersects(hammer)) {
         pieces.unchecked_append(*this);
         return pieces;
     }
-    Rect top_shard {
+    Rect<T> top_shard {
         x(),
         y(),
         width(),
         hammer.y() - y()
     };
-    Rect bottom_shard {
+    Rect<T> bottom_shard {
         x(),
         hammer.y() + hammer.height(),
         width(),
         (y() + height()) - (hammer.y() + hammer.height())
     };
-    Rect left_shard {
+    Rect<T> left_shard {
         x(),
         max(hammer.y(), y()),
         hammer.x() - x(),
         min((hammer.y() + hammer.height()), (y() + height())) - max(hammer.y(), y())
     };
-    Rect right_shard {
+    Rect<T> right_shard {
         hammer.x() + hammer.width(),
         max(hammer.y(), y()),
         right() - hammer.right(),
         min((hammer.y() + hammer.height()), (y() + height())) - max(hammer.y(), y())
     };
-    if (intersects(top_shard))
+    if (!top_shard.is_empty())
         pieces.unchecked_append(top_shard);
-    if (intersects(bottom_shard))
+    if (!bottom_shard.is_empty())
         pieces.unchecked_append(bottom_shard);
-    if (intersects(left_shard))
+    if (!left_shard.is_empty())
         pieces.unchecked_append(left_shard);
-    if (intersects(right_shard))
+    if (!right_shard.is_empty())
         pieces.unchecked_append(right_shard);
 
     return pieces;
 }
 
-void Rect::align_within(const Rect& other, TextAlignment alignment)
+template<typename T>
+void Rect<T>::align_within(const Rect<T>& other, TextAlignment alignment)
 {
     switch (alignment) {
     case TextAlignment::Center:
@@ -128,33 +134,48 @@ void Rect::align_within(const Rect& other, TextAlignment alignment)
         set_x(other.x() + other.width() - width());
         center_vertically_within(other);
         return;
+    case TextAlignment::BottomRight:
+        set_x(other.x() + other.width() - width());
+        set_y(other.y() + other.height() - height());
+        return;
     }
 }
 
-String Rect::to_string() const
+template<>
+String IntRect::to_string() const
 {
     return String::format("[%d,%d %dx%d]", x(), y(), width(), height());
 }
 
-const LogStream& operator<<(const LogStream& stream, const Rect& value)
+template<>
+String FloatRect::to_string() const
 {
-    return stream << value.to_string();
+    return String::format("[%f,%f %fx%f]", x(), y(), width(), height());
 }
 
 }
 
 namespace IPC {
 
-bool decode(BufferStream& stream, Gfx::Rect& rect)
+bool encode(Encoder& encoder, const Gfx::IntRect& rect)
 {
-    Gfx::Point point;
-    Gfx::Size size;
-    if (!decode(stream, point))
+    encoder << rect.location() << rect.size();
+    return true;
+}
+
+bool decode(Decoder& decoder, Gfx::IntRect& rect)
+{
+    Gfx::IntPoint point;
+    Gfx::IntSize size;
+    if (!decoder.decode(point))
         return false;
-    if (!decode(stream, size))
+    if (!decoder.decode(size))
         return false;
     rect = { point, size };
     return true;
 }
 
 }
+
+template class Gfx::Rect<int>;
+template class Gfx::Rect<float>;

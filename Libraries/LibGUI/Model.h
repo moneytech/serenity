@@ -32,6 +32,7 @@
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <LibGUI/ModelIndex.h>
+#include <LibGUI/ModelRole.h>
 #include <LibGUI/Variant.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/TextAlignment.h>
@@ -44,46 +45,37 @@ enum class SortOrder {
     Descending
 };
 
+class ModelClient {
+public:
+    virtual ~ModelClient() { }
+
+    virtual void model_did_update(unsigned flags) = 0;
+};
+
 class Model : public RefCounted<Model> {
 public:
-    struct ColumnMetadata {
-        int preferred_width { 0 };
-        Gfx::TextAlignment text_alignment { Gfx::TextAlignment::CenterLeft };
-        const Gfx::Font* font { nullptr };
-        enum class Sortable {
-            False,
-            True,
-        };
-        Sortable sortable { Sortable::True };
-    };
-
-    enum class Role {
-        Display,
-        Sort,
-        Custom,
-        ForegroundColor,
-        BackgroundColor,
-        Icon,
-        Font,
-        DragData,
+    enum UpdateFlag {
+        DontInvalidateIndexes = 0,
+        InvalidateAllIndexes = 1 << 0,
     };
 
     virtual ~Model();
 
     virtual int row_count(const ModelIndex& = ModelIndex()) const = 0;
     virtual int column_count(const ModelIndex& = ModelIndex()) const = 0;
-    virtual String row_name(int) const { return {}; }
     virtual String column_name(int) const { return {}; }
-    virtual ColumnMetadata column_metadata(int) const { return {}; }
-    virtual Variant data(const ModelIndex&, Role = Role::Display) const = 0;
+    virtual Variant data(const ModelIndex&, ModelRole = ModelRole::Display) const = 0;
+    virtual TriState data_matches(const ModelIndex&, Variant) const { return TriState::Unknown; }
     virtual void update() = 0;
     virtual ModelIndex parent_index(const ModelIndex&) const { return {}; }
-    virtual ModelIndex index(int row, int column = 0, const ModelIndex& = ModelIndex()) const { return create_index(row, column); }
-    virtual ModelIndex sibling(int row, int column, const ModelIndex& parent) const;
+    virtual ModelIndex index(int row, int column = 0, const ModelIndex& parent = ModelIndex()) const;
     virtual bool is_editable(const ModelIndex&) const { return false; }
-    virtual void set_data(const ModelIndex&, const Variant&) {}
+    virtual void set_data(const ModelIndex&, const Variant&) { }
     virtual int tree_column() const { return 0; }
     virtual bool accepts_drag(const ModelIndex&, const StringView& data_type);
+
+    virtual bool is_column_sortable([[maybe_unused]] int column_index) const { return true; }
+    virtual void sort([[maybe_unused]] int column, SortOrder) { }
 
     bool is_valid(const ModelIndex& index) const
     {
@@ -91,27 +83,25 @@ public:
         return index.row() >= 0 && index.row() < row_count(parent_index) && index.column() >= 0 && index.column() < column_count(parent_index);
     }
 
-    virtual int key_column() const { return -1; }
-    virtual SortOrder sort_order() const { return SortOrder::None; }
-    virtual void set_key_column_and_sort_order(int, SortOrder) {}
-
     virtual StringView drag_data_type() const { return {}; }
 
     void register_view(Badge<AbstractView>, AbstractView&);
     void unregister_view(Badge<AbstractView>, AbstractView&);
 
-    Function<void()> on_update;
+    void register_client(ModelClient&);
+    void unregister_client(ModelClient&);
 
 protected:
     Model();
 
     void for_each_view(Function<void(AbstractView&)>);
-    void did_update();
+    void did_update(unsigned flags = UpdateFlag::InvalidateAllIndexes);
 
     ModelIndex create_index(int row, int column, const void* data = nullptr) const;
 
 private:
     HashTable<AbstractView*> m_views;
+    HashTable<ModelClient*> m_clients;
 };
 
 inline ModelIndex ModelIndex::parent() const

@@ -39,6 +39,8 @@
 #include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/LogStream.h>
+#include <AK/Memory.h>
+#include <AK/StringView.h>
 #include <Kernel/VM/MemoryManager.h>
 #include <Kernel/VM/Region.h>
 
@@ -102,6 +104,9 @@ public:
     const u8* data() const { return m_impl->data(); }
     size_t size() const { return m_impl->size(); }
     size_t capacity() const { return m_impl->capacity(); }
+
+    void* end_pointer() { return data() + size(); }
+    const void* end_pointer() const { return data() + size(); }
 
     void set_size(size_t size) { m_impl->set_size(size); }
 

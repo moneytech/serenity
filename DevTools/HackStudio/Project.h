@@ -27,15 +27,25 @@
 #pragma once
 
 #include "ProjectFile.h"
+#include <AK/LexicalPath.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Model.h>
 
+namespace HackStudio {
+
+enum class ProjectType {
+    Unknown,
+    Cpp,
+    JavaScript
+};
+
 class Project {
-    AK_MAKE_NONCOPYABLE(Project)
-    AK_MAKE_NONMOVABLE(Project)
+    AK_MAKE_NONCOPYABLE(Project);
+    AK_MAKE_NONMOVABLE(Project);
+
 public:
     ~Project();
 
@@ -47,7 +57,12 @@ public:
 
     ProjectFile* get_file(const String& filename);
 
+    ProjectType type() const { return m_type; }
     GUI::Model& model() { return *m_model; }
+    String default_file() const;
+    String name() const { return m_name; }
+    String path() const { return m_path; }
+    String root_directory() const { return LexicalPath(m_path).dirname(); }
 
     template<typename Callback>
     void for_each_text_file(Callback callback) const
@@ -65,15 +80,21 @@ private:
     const ProjectTreeNode& root_node() const { return *m_root_node; }
     void rebuild_tree();
 
+    ProjectType m_type { ProjectType::Unknown };
     String m_name;
     String m_path;
     RefPtr<GUI::Model> m_model;
     NonnullRefPtrVector<ProjectFile> m_files;
     RefPtr<ProjectTreeNode> m_root_node;
 
-    GIcon m_directory_icon;
-    GIcon m_file_icon;
-    GIcon m_cplusplus_icon;
-    GIcon m_header_icon;
-    GIcon m_project_icon;
+    GUI::Icon m_directory_icon;
+    GUI::Icon m_file_icon;
+    GUI::Icon m_cplusplus_icon;
+    GUI::Icon m_header_icon;
+    GUI::Icon m_project_icon;
+    GUI::Icon m_javascript_icon;
+    GUI::Icon m_hackstudio_icon;
+    GUI::Icon m_form_icon;
 };
+
+}

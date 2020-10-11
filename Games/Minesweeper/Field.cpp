@@ -56,7 +56,7 @@ public:
     }
 
 private:
-    SquareButton() {}
+    SquareButton() { }
 };
 
 class SquareLabel final : public GUI::Label {
@@ -121,7 +121,7 @@ private:
     bool m_chord { false };
 };
 
-Field::Field(GUI::Label& flag_label, GUI::Label& time_label, GUI::Button& face_button, Function<void(Gfx::Size)> on_size_changed)
+Field::Field(GUI::Label& flag_label, GUI::Label& time_label, GUI::Button& face_button, Function<void(Gfx::IntSize)> on_size_changed)
     : m_face_button(face_button)
     , m_flag_label(flag_label)
     , m_time_label(time_label)
@@ -147,7 +147,7 @@ Field::Field(GUI::Label& flag_label, GUI::Label& time_label, GUI::Button& face_b
     set_fill_with_background_color(true);
     reset();
 
-    m_face_button.on_click = [this](auto&) { reset(); };
+    m_face_button.on_click = [this](auto) { reset(); };
     set_face(Face::Default);
 
     {
@@ -156,7 +156,13 @@ Field::Field(GUI::Label& flag_label, GUI::Label& time_label, GUI::Button& face_b
         int mine_count = config->read_num_entry("Game", "MineCount", 10);
         int rows = config->read_num_entry("Game", "Rows", 9);
         int columns = config->read_num_entry("Game", "Columns", 9);
-        set_field_size(rows, columns, mine_count);
+
+        // Do a quick sanity check to make sure the user hasn't tried anything crazy
+        if (mine_count > rows * columns || rows <= 0 || columns <= 0 || mine_count <= 0)
+            set_field_size(9, 9, 10);
+        else
+            set_field_size(rows, columns, mine_count);
+
         set_single_chording(single_chording);
     }
 }
@@ -183,8 +189,8 @@ void Field::set_face(Face face)
 template<typename Callback>
 void Square::for_each_neighbor(Callback callback)
 {
-    int r = row;
-    int c = column;
+    size_t r = row;
+    size_t c = column;
     if (r > 0) // Up
         callback(field->square(r - 1, c));
     if (c > 0) // Left
@@ -217,7 +223,7 @@ void Field::reset()
 
     m_squares.resize(max(m_squares.size(), rows() * columns()));
 
-    for (int i = rows() * columns(); i < m_squares.size(); ++i) {
+    for (int i = rows() * columns(); i < static_cast<int>(m_squares.size()); ++i) {
         auto& square = m_squares[i];
         square->button->set_visible(false);
         square->label->set_visible(false);
@@ -230,12 +236,12 @@ void Field::reset()
             mines.set(location);
     }
 
-    int i = 0;
-    for (int r = 0; r < rows(); ++r) {
-        for (int c = 0; c < columns(); ++c) {
+    size_t i = 0;
+    for (size_t r = 0; r < rows(); ++r) {
+        for (size_t c = 0; c < columns(); ++c) {
             if (!m_squares[i])
                 m_squares[i] = make<Square>();
-            Gfx::Rect rect = { frame_thickness() + c * square_size(), frame_thickness() + r * square_size(), square_size(), square_size() };
+            Gfx::IntRect rect = { frame_thickness() + static_cast<int>(c) * square_size(), frame_thickness() + static_cast<int>(r) * square_size(), square_size(), square_size() };
             auto& square = this->square(r, c);
             square.field = this;
             square.row = r;
@@ -254,7 +260,7 @@ void Field::reset()
             square.label->set_icon(square.has_mine ? m_mine_bitmap : nullptr);
             if (!square.button) {
                 square.button = add<SquareButton>();
-                square.button->on_click = [this, &square](GUI::Button&) {
+                square.button->on_click = [this, &square](auto) {
                     on_square_clicked(square);
                 };
                 square.button->on_right_click = [this, &square] {
@@ -276,10 +282,10 @@ void Field::reset()
         }
     }
 
-    for (int r = 0; r < rows(); ++r) {
-        for (int c = 0; c < columns(); ++c) {
+    for (size_t r = 0; r < rows(); ++r) {
+        for (size_t c = 0; c < columns(); ++c) {
             auto& square = this->square(r, c);
-            int number = 0;
+            size_t number = 0;
             square.for_each_neighbor([&number](auto& neighbor) {
                 number += neighbor.has_mine;
             });
@@ -323,13 +329,13 @@ void Field::paint_event(GUI::PaintEvent& event)
     painter.add_clip_rect(inner_rect);
 
     for (int y = inner_rect.top() - 1; y <= inner_rect.bottom(); y += square_size()) {
-        Gfx::Point a { inner_rect.left(), y };
-        Gfx::Point b { inner_rect.right(), y };
+        Gfx::IntPoint a { inner_rect.left(), y };
+        Gfx::IntPoint b { inner_rect.right(), y };
         painter.draw_line(a, b, palette().threed_shadow1());
     }
     for (int x = frame_inner_rect().left() - 1; x <= frame_inner_rect().right(); x += square_size()) {
-        Gfx::Point a { x, inner_rect.top() };
-        Gfx::Point b { x, inner_rect.bottom() };
+        Gfx::IntPoint a { x, inner_rect.top() };
+        Gfx::IntPoint b { x, inner_rect.bottom() };
         painter.draw_line(a, b, palette().threed_shadow1());
     }
 }
@@ -380,7 +386,7 @@ void Field::on_square_chorded(Square& square)
         return;
     if (!square.number)
         return;
-    int adjacent_flags = 0;
+    size_t adjacent_flags = 0;
     square.for_each_neighbor([&](auto& neighbor) {
         if (neighbor.has_flag)
             ++adjacent_flags;
@@ -461,8 +467,8 @@ void Field::game_over()
 
 void Field::reveal_mines()
 {
-    for (int r = 0; r < rows(); ++r) {
-        for (int c = 0; c < columns(); ++c) {
+    for (size_t r = 0; r < rows(); ++r) {
+        for (size_t c = 0; c < columns(); ++c) {
             auto& square = this->square(r, c);
             if (square.has_mine && !square.has_flag) {
                 square.button->set_visible(false);
@@ -490,7 +496,7 @@ void Field::set_chord_preview(Square& square, bool chord_preview)
     });
 }
 
-void Field::set_field_size(int rows, int columns, size_t mine_count)
+void Field::set_field_size(size_t rows, size_t columns, size_t mine_count)
 {
     if (m_rows == rows && m_columns == columns && m_mine_count == mine_count)
         return;
@@ -526,6 +532,6 @@ Square::~Square()
 template<typename Callback>
 void Field::for_each_square(Callback callback)
 {
-    for (int i = 0; i < rows() * columns(); ++i)
+    for (size_t i = 0; i < rows() * columns(); ++i)
         callback(*m_squares[i]);
 }

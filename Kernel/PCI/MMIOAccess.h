@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,6 +25,7 @@
  */
 
 #pragma once
+
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <AK/Types.h>
@@ -36,48 +37,35 @@
 #include <Kernel/VM/VMObject.h>
 
 namespace Kernel {
+namespace PCI {
 
-class PCI::MMIOAccess final : public PCI::Access {
+class MMIOAccess final : public Access {
 public:
     static void initialize(PhysicalAddress mcfg);
-    virtual void enumerate_all(Function<void(Address, ID)>&) override final;
-
-    virtual String get_access_type() override final { return "MMIO-Access"; };
-    virtual u32 get_segments_count();
 
 protected:
     explicit MMIOAccess(PhysicalAddress mcfg);
 
 private:
-    virtual u8 read8_field(Address address, u32) override final;
-    virtual u16 read16_field(Address address, u32) override final;
-    virtual u32 read32_field(Address address, u32) override final;
-    virtual void write8_field(Address address, u32, u8) override final;
-    virtual void write16_field(Address address, u32, u16) override final;
-    virtual void write32_field(Address address, u32, u32) override final;
+    virtual const char* access_type() const override { return "MMIO-Access"; };
+    virtual u32 segment_count() const override;
+    virtual void enumerate_hardware(Function<void(Address, ID)>) override;
+    virtual void write8_field(Address address, u32, u8) override;
+    virtual void write16_field(Address address, u32, u16) override;
+    virtual void write32_field(Address address, u32, u32) override;
+    virtual u8 read8_field(Address address, u32) override;
+    virtual u16 read16_field(Address address, u32) override;
+    virtual u32 read32_field(Address address, u32) override;
 
     void map_device(Address address);
-    virtual u8 get_segment_start_bus(u32);
-    virtual u8 get_segment_end_bus(u32);
+    virtual u8 segment_start_bus(u32) const override;
+    virtual u8 segment_end_bus(u32) const override;
 
     PhysicalAddress m_mcfg;
-    HashMap<u16, MMIOSegment*>& m_segments;
+    HashMap<u16, MMIOSegment> m_segments;
     OwnPtr<Region> m_mmio_window_region;
-    PCI::ChangeableAddress m_mapped_address;
+    ChangeableAddress m_mapped_address;
 };
 
-class PCI::MMIOSegment {
-public:
-    MMIOSegment(PhysicalAddress, u8, u8);
-    u8 get_start_bus();
-    u8 get_end_bus();
-    size_t get_size();
-    PhysicalAddress get_paddr();
-
-private:
-    PhysicalAddress m_base_addr;
-    u8 m_start_bus;
-    u8 m_end_bus;
-};
-
+}
 }

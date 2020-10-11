@@ -40,35 +40,10 @@
 
 namespace Kernel {
 
-#define O_RDONLY (1 << 0)
-#define O_WRONLY (1 << 1)
-#define O_RDWR (O_RDONLY | O_WRONLY)
-#define O_ACCMODE (O_RDONLY | O_WRONLY)
-#define O_EXEC (1 << 2)
-#define O_CREAT (1 << 3)
-#define O_EXCL (1 << 4)
-#define O_NOCTTY (1 << 5)
-#define O_TRUNC (1 << 6)
-#define O_APPEND (1 << 7)
-#define O_NONBLOCK (1 << 8)
-#define O_DIRECTORY (1 << 9)
-#define O_NOFOLLOW (1 << 10)
-#define O_CLOEXEC (1 << 11)
-#define O_DIRECT (1 << 12)
-
-// Kernel internal options
-#define O_NOFOLLOW_NOERROR (1 << 29)
-#define O_UNLINK_INTERNAL (1 << 30)
-
-#define MS_NODEV 1
-#define MS_NOEXEC 2
-#define MS_NOSUID 4
-#define MS_BIND 8
-
 class Custody;
 class Device;
 class FileDescription;
-class UnveiledPath;
+struct UnveiledPath;
 
 struct UidAndGid {
     uid_t uid;
@@ -83,23 +58,27 @@ public:
         Mount(FS&, Custody* host_custody, int flags);
         Mount(Inode& source, Custody& host_custody, int flags);
 
-        InodeIdentifier host() const;
-        InodeIdentifier guest() const { return m_guest; }
+        const Inode* host() const;
+        Inode* host();
+
+        const Inode& guest() const { return *m_guest; }
+        Inode& guest() { return *m_guest; }
 
         const FS& guest_fs() const { return *m_guest_fs; }
 
         String absolute_path() const;
 
         int flags() const { return m_flags; }
+        void set_flags(int flags) { m_flags = flags; }
 
     private:
-        InodeIdentifier m_host;
-        InodeIdentifier m_guest;
+        NonnullRefPtr<Inode> m_guest;
         NonnullRefPtr<FS> m_guest_fs;
         RefPtr<Custody> m_host_custody;
         int m_flags;
     };
 
+    static void initialize();
     static VFS& the();
 
     VFS();
@@ -108,7 +87,8 @@ public:
     bool mount_root(FS&);
     KResult mount(FS&, Custody& mount_point, int flags);
     KResult bind_mount(Custody& source, Custody& mount_point, int flags);
-    KResult unmount(InodeIdentifier guest_inode_id);
+    KResult remount(Custody& mount_point, int new_flags);
+    KResult unmount(Inode& guest_inode);
 
     KResultOr<NonnullRefPtr<FileDescription>> open(StringView path, int options, mode_t mode, Custody& base, Optional<UidAndGid> = {});
     KResultOr<NonnullRefPtr<FileDescription>> create(StringView path, int options, mode_t mode, Custody& parent_custody, Optional<UidAndGid> = {});
@@ -118,9 +98,9 @@ public:
     KResult symlink(StringView target, StringView linkpath, Custody& base);
     KResult rmdir(StringView path, Custody& base);
     KResult chmod(StringView path, mode_t, Custody& base);
-    KResult chmod(Inode&, mode_t);
+    KResult chmod(Custody&, mode_t);
     KResult chown(StringView path, uid_t, gid_t, Custody& base);
-    KResult chown(Inode&, uid_t, gid_t);
+    KResult chown(Custody&, uid_t, gid_t);
     KResult access(StringView path, int mode, Custody& base);
     KResultOr<InodeMetadata> lookup_metadata(StringView path, Custody& base, int options = 0);
     KResult utime(StringView path, Custody& base, time_t atime, time_t mtime);
@@ -137,6 +117,7 @@ public:
 
     Custody& root_custody();
     KResultOr<NonnullRefPtr<Custody>> resolve_path(StringView path, Custody& base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0);
+    KResultOr<NonnullRefPtr<Custody>> resolve_path_without_veil(StringView path, Custody& base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0);
 
 private:
     friend class FileDescription;
@@ -144,20 +125,19 @@ private:
     const UnveiledPath* find_matching_unveiled_path(StringView path);
     KResult validate_path_against_process_veil(StringView path, int options);
 
-    RefPtr<Inode> get_inode(InodeIdentifier);
-
     bool is_vfs_root(InodeIdentifier) const;
 
-    void traverse_directory_inode(Inode&, Function<bool(const FS::DirectoryEntry&)>);
+    KResult traverse_directory_inode(Inode&, Function<bool(const FS::DirectoryEntryView&)>);
 
+    Mount* find_mount_for_host(Inode&);
     Mount* find_mount_for_host(InodeIdentifier);
+    Mount* find_mount_for_guest(Inode&);
     Mount* find_mount_for_guest(InodeIdentifier);
 
     Lock m_lock { "VFSLock" };
 
     RefPtr<Inode> m_root_inode;
-    Vector<Mount> m_mounts;
-
+    Vector<Mount, 16> m_mounts;
     RefPtr<Custody> m_root_custody;
 };
 

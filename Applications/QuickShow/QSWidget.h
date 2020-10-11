@@ -27,24 +27,43 @@
 #pragma once
 
 #include <LibGUI/Frame.h>
+#include <LibGfx/Bitmap.h>
+#include <LibGfx/Point.h>
 
 class QSLabel;
 
 class QSWidget final : public GUI::Frame {
     C_OBJECT(QSWidget)
 public:
+    enum Directions {
+        First,
+        Back,
+        Forward,
+        Last
+    };
+
     virtual ~QSWidget() override;
 
-    void set_bitmap(NonnullRefPtr<Gfx::Bitmap>);
     const Gfx::Bitmap* bitmap() const { return m_bitmap.ptr(); }
-
-    void set_path(const String&);
     const String& path() const { return m_path; }
+    void set_scale(int);
+    int scale() { return m_scale; }
+    void set_toolbar_height(int height) { m_toolbar_height = height; }
+    int toolbar_height() { return m_toolbar_height; }
 
-    Function<void(int)> on_scale_change;
+    void clear();
+    void flip(Gfx::Orientation);
+    void rotate(Gfx::RotationDirection);
+    void navigate(Directions);
+    void load_from_file(const String&);
+
+    Function<void(int, Gfx::IntRect)> on_scale_change;
+    Function<void()> on_doubleclick;
+    Function<void(const GUI::DropEvent&)> on_drop;
 
 private:
     QSWidget();
+    virtual void doubleclick_event(GUI::MouseEvent&) override;
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
@@ -54,11 +73,17 @@ private:
     virtual void drop_event(GUI::DropEvent&) override;
 
     void relayout();
+    void resize_window();
 
-    RefPtr<Gfx::Bitmap> m_bitmap;
-    Gfx::Rect m_bitmap_rect;
-    int m_scale { 100 };
-    Gfx::Point m_pan_origin;
-    Gfx::Point m_pan_bitmap_origin;
     String m_path;
+    RefPtr<Gfx::Bitmap> m_bitmap;
+    int m_toolbar_height { 28 };
+
+    Gfx::IntRect m_bitmap_rect;
+    int m_scale { -1 };
+    Gfx::FloatPoint m_pan_origin;
+
+    Gfx::IntPoint m_click_position;
+    Gfx::FloatPoint m_saved_pan_origin;
+    Vector<String> m_files_in_same_dir;
 };

@@ -26,48 +26,83 @@
 
 #pragma once
 
+#include <AK/Assertions.h>
+#include <AK/Checked.h>
 #include <AK/Forward.h>
+#include <AK/Span.h>
 #include <AK/StdLibExtras.h>
+#include <AK/StringUtils.h>
 
 namespace AK {
 
 class StringView {
 public:
-    StringView() {}
-    StringView(const char* characters, size_t length)
+    ALWAYS_INLINE constexpr StringView() { }
+    ALWAYS_INLINE constexpr StringView(const char* characters, size_t length)
         : m_characters(characters)
         , m_length(length)
     {
+        ASSERT(!Checked<uintptr_t>::addition_would_overflow((uintptr_t)characters, length));
     }
-    StringView(const unsigned char* characters, size_t length)
+    ALWAYS_INLINE StringView(const unsigned char* characters, size_t length)
         : m_characters((const char*)characters)
         , m_length(length)
     {
+        ASSERT(!Checked<uintptr_t>::addition_would_overflow((uintptr_t)characters, length));
     }
-    [[gnu::always_inline]] inline StringView(const char* cstring)
+    ALWAYS_INLINE constexpr StringView(const char* cstring)
         : m_characters(cstring)
-        , m_length(cstring ? strlen(cstring) : 0)
+        , m_length(cstring ? __builtin_strlen(cstring) : 0)
+    {
+    }
+    ALWAYS_INLINE StringView(ReadonlyBytes bytes)
+        : m_characters(reinterpret_cast<const char*>(bytes.data()))
+        , m_length(bytes.size())
     {
     }
 
     StringView(const ByteBuffer&);
     StringView(const String&);
+    StringView(const FlyString&);
 
     bool is_null() const { return !m_characters; }
     bool is_empty() const { return m_length == 0; }
+
     const char* characters_without_null_termination() const { return m_characters; }
     size_t length() const { return m_length; }
-    char operator[](size_t index) const { return m_characters[index]; }
+
+    ReadonlyBytes bytes() const { return { m_characters, m_length }; }
+
+    const char& operator[](size_t index) const { return m_characters[index]; }
+
+    using ConstIterator = SimpleIterator<const StringView, const char>;
+
+    constexpr ConstIterator begin() const { return ConstIterator::begin(*this); }
+    constexpr ConstIterator end() const { return ConstIterator::end(*this); }
 
     unsigned hash() const;
 
-    bool starts_with(const StringView&) const;
-    bool ends_with(const StringView&) const;
+    bool starts_with(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    bool ends_with(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
     bool starts_with(char) const;
     bool ends_with(char) const;
+    bool matches(const StringView& mask, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
+    bool contains(char) const;
+    bool contains(const StringView&) const;
+    bool equals_ignoring_case(const StringView& other) const;
+
+    StringView trim_whitespace(TrimMode mode = TrimMode::Both) const { return StringUtils::trim_whitespace(*this, mode); }
+
+    Optional<size_t> find_first_of(char) const;
+    Optional<size_t> find_first_of(const StringView&) const;
+
+    Optional<size_t> find_last_of(char) const;
+    Optional<size_t> find_last_of(const StringView&) const;
 
     StringView substring_view(size_t start, size_t length) const;
+    StringView substring_view(size_t start) const;
     Vector<StringView> split_view(char, bool keep_empty = false) const;
+    Vector<StringView> split_view(const StringView&, bool keep_empty = false) const;
 
     // Create a Vector of StringViews split by line endings. As of CommonMark
     // 0.29, the spec defines a line ending as "a newline (U+000A), a carriage
@@ -75,9 +110,8 @@ public:
     // following newline.".
     Vector<StringView> lines(bool consider_cr = true) const;
 
-    // FIXME: These should be shared between String and StringView somehow!
-    unsigned to_uint(bool& ok) const;
-    int to_int(bool& ok) const;
+    Optional<int> to_int() const;
+    Optional<unsigned> to_uint() const;
 
     // Create a new substring view of this string view, starting either at the beginning of
     // the given substring view, or after its end, and continuing until the end of this string
@@ -104,10 +138,10 @@ public:
             return !cstring;
         if (!cstring)
             return false;
-        size_t other_length = strlen(cstring);
+        size_t other_length = __builtin_strlen(cstring);
         if (m_length != other_length)
             return false;
-        return !memcmp(m_characters, cstring, m_length);
+        return !__builtin_memcmp(m_characters, cstring, m_length);
     }
     bool operator!=(const char* cstring) const
     {
@@ -124,7 +158,7 @@ public:
             return false;
         if (length() != other.length())
             return false;
-        return !memcmp(m_characters, other.m_characters, m_length);
+        return !__builtin_memcmp(m_characters, other.m_characters, m_length);
     }
 
     bool operator!=(const StringView& other) const
@@ -132,11 +166,30 @@ public:
         return !(*this == other);
     }
 
+    bool operator<(const StringView& other) const
+    {
+        if (int c = __builtin_memcmp(m_characters, other.m_characters, min(m_length, other.m_length)))
+            return c < 0;
+        return m_length < other.m_length;
+    }
+
+    const StringImpl* impl() const { return m_impl; }
+
+    String to_string() const;
+
+    const char* begin() { return m_characters; }
+    const char* end() { return m_characters + m_length; }
+
 private:
     friend class String;
     const StringImpl* m_impl { nullptr };
     const char* m_characters { nullptr };
     size_t m_length { 0 };
+};
+
+template<>
+struct Traits<StringView> : public GenericTraits<String> {
+    static unsigned hash(const StringView& s) { return s.hash(); }
 };
 
 }

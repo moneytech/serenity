@@ -24,6 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "BackgroundWidget.h"
+#include "TextWidget.h"
+#include "UnuncheckableButton.h"
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
@@ -32,19 +35,15 @@
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
-#include <LibGUI/Desktop.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/StackWidget.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Font.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Font.h>
 #include <stdio.h>
 #include <unistd.h>
-
-#include "BackgroundWidget.h"
-#include "TextWidget.h"
-#include "UnuncheckableButton.h"
 
 struct ContentPage {
     String menu_name;
@@ -53,7 +52,7 @@ struct ContentPage {
     Vector<String> content;
 };
 
-Optional<Vector<ContentPage>> parse_welcome_file(const String& path)
+static Optional<Vector<ContentPage>> parse_welcome_file(const String& path)
 {
     const auto error = Optional<Vector<ContentPage>>();
     auto file = Core::File::construct(path);
@@ -81,7 +80,7 @@ Optional<Vector<ContentPage>> parse_welcome_file(const String& path)
             line = line.substring(0, line.length() - 1); // remove newline
         switch (line[0]) {
         case '*':
-            dbg() << "menu_item line:\t" << line;
+            dbgln("menu_item line:\t{}", line);
             if (started)
                 pages.append(current);
             else
@@ -91,25 +90,25 @@ Optional<Vector<ContentPage>> parse_welcome_file(const String& path)
             current.menu_name = line.substring(2, line.length() - 2);
             break;
         case '$':
-            dbg() << "icon line: \t" << line;
+            dbgln("icon line: \t{}", line);
             current.icon = line.substring(2, line.length() - 2);
             break;
         case '>':
-            dbg() << "title line:\t" << line;
+            dbgln("title line:\t{}", line);
             current.title = line.substring(2, line.length() - 2);
             break;
         case '\n':
-            dbg() << "newline";
+            dbgln("newline");
 
             if (!current_output_line.to_string().is_empty())
                 current.content.append(current_output_line.to_string());
             current_output_line.clear();
             break;
         case '#':
-            dbg() << "comment line:\t" << line;
+            dbgln("comment line:\t{}", line);
             break;
         default:
-            dbg() << "content line:\t" << line;
+            dbgln("content line:\t", line);
             if (current_output_line.length() != 0)
                 current_output_line.append(' ');
             current_output_line.append(line);
@@ -133,7 +132,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer rpath", nullptr) < 0) {
         perror("pledge");
@@ -149,108 +148,105 @@ int main(int argc, char** argv)
 
     Optional<Vector<ContentPage>> _pages = parse_welcome_file("/res/welcome.txt");
     if (!_pages.has_value()) {
-        GUI::MessageBox::show("Could not open Welcome file.", "Welcome", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, nullptr);
+        GUI::MessageBox::show(nullptr, "Could not open Welcome file.", "Welcome", GUI::MessageBox::Type::Error);
         return 1;
     }
     auto pages = _pages.value();
 
     auto window = GUI::Window::construct();
     window->set_title("Welcome");
-    Gfx::Rect window_rect { 0, 0, 640, 360 };
-    window_rect.center_within(GUI::Desktop::the().rect());
-    window->set_resizable(true);
-    window->set_rect(window_rect);
+    window->resize(640, 360);
+    window->center_on_screen();
 
-    auto background = BackgroundWidget::construct();
-    window->set_main_widget(background);
-    background->set_fill_with_background_color(false);
-    background->set_layout(make<GUI::VerticalBoxLayout>());
-    background->layout()->set_margins({ 16, 8, 16, 8 });
-    background->layout()->set_spacing(8);
-    background->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+    auto& background = window->set_main_widget<BackgroundWidget>();
+    background.set_fill_with_background_color(false);
+    background.set_layout<GUI::VerticalBoxLayout>();
+    background.layout()->set_margins({ 16, 8, 16, 8 });
+    background.layout()->set_spacing(8);
+    background.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
     //
     // header
     //
 
-    auto header = background->add<GUI::Label>();
-    header->set_font(Gfx::Font::load_from_file("/res/fonts/PebbletonBold11.font"));
-    header->set_text("Welcome to SerenityOS!");
-    header->set_text_alignment(Gfx::TextAlignment::CenterLeft);
-    header->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-    header->set_preferred_size(0, 30);
+    auto& header = background.add<GUI::Label>();
+    header.set_font(Gfx::Font::load_from_file("/res/fonts/PebbletonBold14.font"));
+    header.set_text("Welcome to SerenityOS!");
+    header.set_text_alignment(Gfx::TextAlignment::CenterLeft);
+    header.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+    header.set_preferred_size(0, 30);
 
     //
     // main section
     //
 
-    auto main_section = background->add<GUI::Widget>();
-    main_section->set_layout(make<GUI::HorizontalBoxLayout>());
-    main_section->layout()->set_margins({ 0, 0, 0, 0 });
-    main_section->layout()->set_spacing(8);
-    main_section->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+    auto& main_section = background.add<GUI::Widget>();
+    main_section.set_layout<GUI::HorizontalBoxLayout>();
+    main_section.layout()->set_margins({ 0, 0, 0, 0 });
+    main_section.layout()->set_spacing(8);
+    main_section.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
-    auto menu = main_section->add<GUI::Widget>();
-    menu->set_layout(make<GUI::VerticalBoxLayout>());
-    menu->layout()->set_margins({ 0, 0, 0, 0 });
-    menu->layout()->set_spacing(4);
-    menu->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
-    menu->set_preferred_size(100, 0);
+    auto& menu = main_section.add<GUI::Widget>();
+    menu.set_layout<GUI::VerticalBoxLayout>();
+    menu.layout()->set_margins({ 0, 0, 0, 0 });
+    menu.layout()->set_spacing(4);
+    menu.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
+    menu.set_preferred_size(100, 0);
 
-    auto stack = main_section->add<GUI::StackWidget>();
-    stack->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+    auto& stack = main_section.add<GUI::StackWidget>();
+    stack.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
     bool first = true;
     for (auto& page : pages) {
-        auto content = stack->add<GUI::Widget>();
-        content->set_layout(make<GUI::VerticalBoxLayout>());
-        content->layout()->set_margins({ 0, 0, 0, 0 });
-        content->layout()->set_spacing(8);
-        content->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
+        auto& content = stack.add<GUI::Widget>();
+        content.set_layout<GUI::VerticalBoxLayout>();
+        content.layout()->set_margins({ 0, 0, 0, 0 });
+        content.layout()->set_spacing(8);
+        content.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
-        auto title_box = content->add<GUI::Widget>();
-        title_box->set_layout(make<GUI::HorizontalBoxLayout>());
-        title_box->layout()->set_spacing(4);
-        title_box->set_preferred_size(0, 16);
-        title_box->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+        auto& title_box = content.add<GUI::Widget>();
+        title_box.set_layout<GUI::HorizontalBoxLayout>();
+        title_box.layout()->set_spacing(4);
+        title_box.set_preferred_size(0, 16);
+        title_box.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
 
         if (!page.icon.is_empty()) {
-            auto icon = title_box->add<GUI::Label>();
-            icon->set_icon(Gfx::Bitmap::load_from_file(page.icon));
-            icon->set_preferred_size(16, 16);
-            icon->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
+            auto& icon = title_box.add<GUI::ImageWidget>();
+            icon.set_preferred_size(16, 16);
+            icon.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
+            icon.load_from_file(page.icon);
         }
 
-        auto content_title = title_box->add<GUI::Label>();
-        content_title->set_font(Gfx::Font::default_bold_font());
-        content_title->set_text(page.title);
-        content_title->set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        content_title->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-        content_title->set_preferred_size(0, 10);
+        auto& content_title = title_box.add<GUI::Label>();
+        content_title.set_font(Gfx::Font::default_bold_font());
+        content_title.set_text(page.title);
+        content_title.set_text_alignment(Gfx::TextAlignment::CenterLeft);
+        content_title.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+        content_title.set_preferred_size(0, 10);
 
         for (auto& paragraph : page.content) {
-            auto content_text = content->add<TextWidget>();
-            content_text->set_font(Gfx::Font::default_font());
-            content_text->set_text(paragraph);
-            content_text->set_text_alignment(Gfx::TextAlignment::TopLeft);
-            content_text->set_line_height(12);
-            content_text->wrap_and_set_height();
+            auto& content_text = content.add<TextWidget>();
+            content_text.set_font(Gfx::Font::default_font());
+            content_text.set_text(paragraph);
+            content_text.set_text_alignment(Gfx::TextAlignment::TopLeft);
+            content_text.set_line_height(12);
+            content_text.wrap_and_set_height();
         }
 
-        auto menu_option = menu->add<UnuncheckableButton>();
-        menu_option->set_font(Gfx::Font::default_font());
-        menu_option->set_text(page.menu_name);
-        menu_option->set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        menu_option->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
-        menu_option->set_preferred_size(0, 20);
-        menu_option->set_checkable(true);
-        menu_option->set_exclusive(true);
+        auto& menu_option = menu.add<UnuncheckableButton>();
+        menu_option.set_font(Gfx::Font::default_font());
+        menu_option.set_text(page.menu_name);
+        menu_option.set_text_alignment(Gfx::TextAlignment::CenterLeft);
+        menu_option.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+        menu_option.set_preferred_size(0, 20);
+        menu_option.set_checkable(true);
+        menu_option.set_exclusive(true);
 
         if (first)
-            menu_option->set_checked(true);
+            menu_option.set_checked(true);
 
-        menu_option->on_click = [content = content.ptr(), &stack](auto&) {
-            stack->set_active_widget(content);
+        menu_option.on_click = [content = &content, &stack](auto) {
+            stack.set_active_widget(content);
             content->invalidate_layout();
         };
 
@@ -258,5 +254,5 @@ int main(int argc, char** argv)
     }
 
     window->show();
-    return app.exec();
+    return app->exec();
 }

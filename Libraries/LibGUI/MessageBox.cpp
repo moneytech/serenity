@@ -26,6 +26,7 @@
 
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGfx/Font.h>
@@ -33,16 +34,21 @@
 
 namespace GUI {
 
-int MessageBox::show(const StringView& text, const StringView& title, Type type, InputType input_type, Core::Object* parent)
+int MessageBox::show(Window* parent_window, const StringView& text, const StringView& title, Type type, InputType input_type)
 {
-    auto box = MessageBox::construct(text, title, type, input_type);
-    if (parent)
-        parent->add_child(box);
+    auto box = MessageBox::construct(parent_window, text, title, type, input_type);
+    if (parent_window)
+        box->set_icon(parent_window->icon());
     return box->exec();
 }
 
-MessageBox::MessageBox(const StringView& text, const StringView& title, Type type, InputType input_type, Core::Object* parent)
-    : Dialog(parent)
+int MessageBox::show_error(Window* parent_window, const StringView& text)
+{
+    return show(parent_window, text, "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK);
+}
+
+MessageBox::MessageBox(Window* parent_window, const StringView& text, const StringView& title, Type type, InputType input_type)
+    : Dialog(parent_window)
     , m_text(text)
     , m_type(type)
     , m_input_type(input_type)
@@ -64,6 +70,8 @@ RefPtr<Gfx::Bitmap> MessageBox::icon() const
         return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-warning.png");
     case Type::Error:
         return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-error.png");
+    case Type::Question:
+        return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-question.png");
     default:
         return nullptr;
     }
@@ -91,52 +99,52 @@ bool MessageBox::should_include_no_button() const
 
 void MessageBox::build()
 {
-    auto widget = Widget::construct();
-    set_main_widget(widget);
+    auto& widget = set_main_widget<Widget>();
 
-    int text_width = widget->font().width(m_text);
+    int text_width = widget.font().width(m_text);
     int icon_width = 0;
 
-    widget->set_layout(make<VerticalBoxLayout>());
-    widget->set_fill_with_background_color(true);
+    widget.set_layout<VerticalBoxLayout>();
+    widget.set_fill_with_background_color(true);
 
-    widget->layout()->set_margins({ 0, 15, 0, 15 });
-    widget->layout()->set_spacing(15);
+    widget.layout()->set_margins({ 8, 8, 8, 8 });
+    widget.layout()->set_spacing(8);
 
-    RefPtr<Widget> message_container = widget;
+    auto& message_container = widget.add<Widget>();
+    message_container.set_layout<HorizontalBoxLayout>();
+    message_container.layout()->set_margins({ 8, 0, 0, 0 });
+    message_container.layout()->set_spacing(8);
+
     if (m_type != Type::None) {
-        message_container = widget->add<Widget>();
-        message_container->set_layout(make<HorizontalBoxLayout>());
-        message_container->layout()->set_margins({ 8, 0, 8, 0 });
-        message_container->layout()->set_spacing(8);
-
-        auto icon_label = message_container->add<Label>();
-        icon_label->set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
-        icon_label->set_preferred_size(32, 32);
-        icon_label->set_icon(icon());
-        icon_width = icon_label->icon()->width();
+        auto& icon_image = message_container.add<ImageWidget>();
+        icon_image.set_bitmap(icon());
+        if (icon())
+            icon_width = icon()->width();
     }
 
-    auto label = message_container->add<Label>(m_text);
-    label->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    label->set_preferred_size(text_width, 16);
+    auto& label = message_container.add<Label>(m_text);
+    label.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
+    label.set_preferred_size(text_width, 16);
+    if (m_type != Type::None)
+        label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
 
-    auto button_container = widget->add<Widget>();
-    button_container->set_layout(make<HorizontalBoxLayout>());
-    button_container->layout()->set_spacing(5);
-    button_container->layout()->set_margins({ 15, 0, 15, 0 });
+    auto& button_container = widget.add<Widget>();
+    button_container.set_layout<HorizontalBoxLayout>();
+    button_container.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
+    button_container.set_preferred_size(0, 24);
+    button_container.layout()->set_spacing(8);
 
     auto add_button = [&](String label, Dialog::ExecResult result) {
-        auto button = button_container->add<Button>();
-        button->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-        button->set_preferred_size(0, 20);
-        button->set_text(label);
-        button->on_click = [this, label, result](auto&) {
-            dbg() << "GUI::MessageBox: '" << label << "' button clicked";
+        auto& button = button_container.add<Button>();
+        button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
+        button.set_preferred_size(96, 0);
+        button.set_text(label);
+        button.on_click = [this, label, result](auto) {
             done(result);
         };
     };
 
+    button_container.layout()->add_spacer();
     if (should_include_ok_button())
         add_button("OK", Dialog::ExecOK);
     if (should_include_yes_button())
@@ -145,8 +153,13 @@ void MessageBox::build()
         add_button("No", Dialog::ExecNo);
     if (should_include_cancel_button())
         add_button("Cancel", Dialog::ExecCancel);
+    button_container.layout()->add_spacer();
 
-    set_rect(x(), y(), text_width + icon_width + 80, 100);
+    int width = button_container.child_widgets().size() * 96 + 32;
+    if (width < text_width + icon_width + 56)
+        width = text_width + icon_width + 56;
+
+    set_rect(x(), y(), width, 96);
     set_resizable(false);
 }
 

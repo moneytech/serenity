@@ -73,50 +73,70 @@ String DevicesModel::column_name(int column) const
     }
 }
 
-GUI::Model::ColumnMetadata DevicesModel::column_metadata(int column) const
-{
-    switch (column) {
-    case Column::Device:
-        return { 70, Gfx::TextAlignment::CenterLeft };
-    case Column::Major:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::Minor:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::ClassName:
-        return { 120, Gfx::TextAlignment::CenterLeft };
-    case Column::Type:
-        return { 120, Gfx::TextAlignment::CenterLeft };
-    default:
-        ASSERT_NOT_REACHED();
-    }
-}
-
-GUI::Variant DevicesModel::data(const GUI::ModelIndex& index, Role) const
+GUI::Variant DevicesModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
 {
     ASSERT(is_valid(index));
 
-    const DeviceInfo& device = m_devices[index.row()];
-    switch (index.column()) {
-    case Column::Device:
-        return device.path;
-    case Column::Major:
-        return device.major;
-    case Column::Minor:
-        return device.minor;
-    case Column::ClassName:
-        return device.class_name;
-    case Column::Type:
-        switch (device.type) {
-        case DeviceInfo::Type::Block:
-            return "Block";
-        case DeviceInfo::Type::Character:
-            return "Character";
+    if (role == GUI::ModelRole::TextAlignment) {
+        switch (index.column()) {
+        case Column::Device:
+            return Gfx::TextAlignment::CenterLeft;
+        case Column::Major:
+            return Gfx::TextAlignment::CenterRight;
+        case Column::Minor:
+            return Gfx::TextAlignment::CenterRight;
+        case Column::ClassName:
+            return Gfx::TextAlignment::CenterLeft;
+        case Column::Type:
+            return Gfx::TextAlignment::CenterLeft;
+        }
+        return {};
+    }
+
+    if (role == GUI::ModelRole::Sort) {
+        const DeviceInfo& device = m_devices[index.row()];
+        switch (index.column()) {
+        case Column::Device:
+            return device.path;
+        case Column::Major:
+            return device.major;
+        case Column::Minor:
+            return device.minor;
+        case Column::ClassName:
+            return device.class_name;
+        case Column::Type:
+            return device.type;
         default:
             ASSERT_NOT_REACHED();
         }
-    default:
-        ASSERT_NOT_REACHED();
     }
+
+    if (role == GUI::ModelRole::Display) {
+        const DeviceInfo& device = m_devices[index.row()];
+        switch (index.column()) {
+        case Column::Device:
+            return device.path;
+        case Column::Major:
+            return device.major;
+        case Column::Minor:
+            return device.minor;
+        case Column::ClassName:
+            return device.class_name;
+        case Column::Type:
+            switch (device.type) {
+            case DeviceInfo::Type::Block:
+                return "Block";
+            case DeviceInfo::Type::Character:
+                return "Character";
+            default:
+                ASSERT_NOT_REACHED();
+            }
+        default:
+            ASSERT_NOT_REACHED();
+        }
+    }
+
+    return {};
 }
 
 void DevicesModel::update()
@@ -125,10 +145,11 @@ void DevicesModel::update()
     if (!proc_devices->open(Core::IODevice::OpenMode::ReadOnly))
         ASSERT_NOT_REACHED();
 
-    auto json = JsonValue::from_string(proc_devices->read_all()).as_array();
+    auto json = JsonValue::from_string(proc_devices->read_all());
+    ASSERT(json.has_value());
 
     m_devices.clear();
-    json.for_each([this](auto& value) {
+    json.value().as_array().for_each([this](auto& value) {
         JsonObject device = value.as_object();
         DeviceInfo device_info;
 

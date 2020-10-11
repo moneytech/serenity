@@ -30,24 +30,15 @@
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/Object.h>
+#include <LibGUI/FocusSource.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/WindowType.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
+#include <LibGfx/StandardCursor.h>
 
 namespace GUI {
-
-enum class StandardCursor {
-    None = 0,
-    Arrow,
-    IBeam,
-    ResizeHorizontal,
-    ResizeVertical,
-    ResizeDiagonalTLBR,
-    ResizeDiagonalBLTR,
-    Hand,
-};
 
 class Window : public Core::Object {
     C_OBJECT(Window)
@@ -62,6 +53,11 @@ public:
     bool is_fullscreen() const { return m_fullscreen; }
     void set_fullscreen(bool);
 
+    bool is_maximized() const;
+
+    bool is_frameless() const { return m_frameless; }
+    void set_frameless(bool frameless) { m_frameless = frameless; }
+
     bool is_resizable() const { return m_resizable; }
     void set_resizable(bool resizable) { m_resizable = resizable; }
 
@@ -71,15 +67,14 @@ public:
     void set_double_buffering_enabled(bool);
     void set_has_alpha_channel(bool);
     void set_opacity(float);
+
+    WindowType window_type() const { return m_window_type; }
     void set_window_type(WindowType);
 
     int window_id() const { return m_window_id; }
 
     String title() const;
     void set_title(const StringView&);
-
-    bool show_titlebar() const { return m_show_titlebar; };
-    void set_show_titlebar(bool show) { m_show_titlebar = show; };
 
     Color background_color() const { return m_background_color; }
     void set_background_color(Color color) { m_background_color = color; }
@@ -90,29 +85,38 @@ public:
     };
 
     Function<CloseRequestDecision()> on_close_request;
+    Function<void(bool is_active_input)> on_active_input_change;
+    Function<void(const bool is_active)> on_activity_change;
 
     int x() const { return rect().x(); }
     int y() const { return rect().y(); }
     int width() const { return rect().width(); }
     int height() const { return rect().height(); }
 
-    Gfx::Rect rect() const;
-    Gfx::Size size() const { return rect().size(); }
-    void set_rect(const Gfx::Rect&);
+    Gfx::IntRect rect() const;
+    Gfx::IntRect rect_in_menubar() const;
+    Gfx::IntSize size() const { return rect().size(); }
+    void set_rect(const Gfx::IntRect&);
     void set_rect(int x, int y, int width, int height) { set_rect({ x, y, width, height }); }
 
-    Gfx::Point position() const { return rect().location(); }
+    Gfx::IntPoint position() const { return rect().location(); }
 
     void move_to(int x, int y) { move_to({ x, y }); }
-    void move_to(const Gfx::Point& point) { set_rect({ point, size() }); }
+    void move_to(const Gfx::IntPoint& point) { set_rect({ point, size() }); }
 
     void resize(int width, int height) { resize({ width, height }); }
-    void resize(const Gfx::Size& size) { set_rect({ position(), size }); }
+    void resize(const Gfx::IntSize& size) { set_rect({ position(), size }); }
+
+    void center_on_screen();
 
     virtual void event(Core::Event&) override;
 
     bool is_visible() const;
     bool is_active() const { return m_is_active; }
+    bool is_active_input() const { return m_is_active_input; }
+
+    bool is_accessory() const { return m_accessory; }
+    void set_accessory(bool accessory) { m_accessory = accessory; }
 
     void show();
     void hide();
@@ -125,12 +129,20 @@ public:
     const Widget* main_widget() const { return m_main_widget; }
     void set_main_widget(Widget*);
 
+    template<class T, class... Args>
+    inline T& set_main_widget(Args&&... args)
+    {
+        auto widget = T::construct(forward<Args>(args)...);
+        set_main_widget(widget.ptr());
+        return *widget;
+    }
+
     Widget* focused_widget() { return m_focused_widget; }
     const Widget* focused_widget() const { return m_focused_widget; }
-    void set_focused_widget(Widget*);
+    void set_focused_widget(Widget*, FocusSource = FocusSource::Programmatic);
 
     void update();
-    void update(const Gfx::Rect&);
+    void update(const Gfx::IntRect&);
 
     void set_global_cursor_tracking_widget(Widget*);
     Widget* global_cursor_tracking_widget() { return m_global_cursor_tracking_widget.ptr(); }
@@ -147,12 +159,17 @@ public:
     Gfx::Bitmap* front_bitmap() { return m_front_bitmap.ptr(); }
     Gfx::Bitmap* back_bitmap() { return m_back_bitmap.ptr(); }
 
-    Gfx::Size size_increment() const { return m_size_increment; }
-    void set_size_increment(const Gfx::Size& increment) { m_size_increment = increment; }
-    Gfx::Size base_size() const { return m_base_size; }
-    void set_base_size(const Gfx::Size& size) { m_base_size = size; }
+    Gfx::IntSize size_increment() const { return m_size_increment; }
+    void set_size_increment(const Gfx::IntSize&);
+    Gfx::IntSize base_size() const { return m_base_size; }
+    void set_base_size(const Gfx::IntSize&);
+    const Optional<Gfx::IntSize>& resize_aspect_ratio() const { return m_resize_aspect_ratio; }
+    void set_resize_aspect_ratio(int width, int height) { set_resize_aspect_ratio(Gfx::IntSize(width, height)); }
+    void set_no_resize_aspect_ratio() { set_resize_aspect_ratio({}); }
+    void set_resize_aspect_ratio(const Optional<Gfx::IntSize>& ratio);
 
-    void set_override_cursor(StandardCursor);
+    void set_cursor(Gfx::StandardCursor);
+    void set_cursor(const Gfx::Bitmap&);
 
     void set_icon(const Gfx::Bitmap*);
     void apply_icon();
@@ -160,16 +177,24 @@ public:
 
     Vector<Widget*> focusable_widgets() const;
 
-    virtual void save_to(AK::JsonObject&) override;
-
     void schedule_relayout();
 
+    static void for_each_window(Badge<WindowServerConnection>, Function<void(Window&)>);
     static void update_all_windows(Badge<WindowServerConnection>);
     void notify_state_changed(Badge<WindowServerConnection>, bool minimized, bool occluded);
 
     virtual bool is_visible_for_timer_purposes() const override { return m_visible_for_timer_purposes; }
 
     Action* action_for_key_event(const KeyEvent&);
+
+    void did_add_widget(Badge<Widget>, Widget&);
+    void did_remove_widget(Badge<Widget>, Widget&);
+
+    Window* find_parent_window();
+
+    void set_progress(int);
+
+    void update_cursor(Badge<Widget>) { update_cursor(); }
 
 protected:
     Window(Core::Object* parent = nullptr);
@@ -178,15 +203,32 @@ protected:
 private:
     virtual bool is_window() const override final { return true; }
 
-    NonnullRefPtr<Gfx::Bitmap> create_backing_bitmap(const Gfx::Size&);
-    NonnullRefPtr<Gfx::Bitmap> create_shared_bitmap(Gfx::BitmapFormat, const Gfx::Size&);
+    void update_cursor();
+
+    void handle_drop_event(DropEvent&);
+    void handle_mouse_event(MouseEvent&);
+    void handle_multi_paint_event(MultiPaintEvent&);
+    void handle_key_event(KeyEvent&);
+    void handle_resize_event(ResizeEvent&);
+    void handle_input_entered_or_left_event(Core::Event&);
+    void handle_became_active_or_inactive_event(Core::Event&);
+    void handle_close_request();
+    void handle_theme_change_event(ThemeChangeEvent&);
+    void handle_drag_move_event(DragEvent&);
+    void handle_left_event();
+
+    void server_did_destroy();
+
+    RefPtr<Gfx::Bitmap> create_backing_bitmap(const Gfx::IntSize&);
+    RefPtr<Gfx::Bitmap> create_shared_bitmap(Gfx::BitmapFormat, const Gfx::IntSize&);
     void set_current_backing_bitmap(Gfx::Bitmap&, bool flush_immediately = false);
-    void flip(const Vector<Gfx::Rect, 32>& dirty_rects);
+    void flip(const Vector<Gfx::IntRect, 32>& dirty_rects);
     void force_update();
 
     RefPtr<Gfx::Bitmap> m_front_bitmap;
     RefPtr<Gfx::Bitmap> m_back_bitmap;
     RefPtr<Gfx::Bitmap> m_icon;
+    RefPtr<Gfx::Bitmap> m_custom_cursor;
     int m_window_id { 0 };
     float m_opacity_when_windowless { 1.0f };
     RefPtr<Widget> m_main_widget;
@@ -194,29 +236,34 @@ private:
     WeakPtr<Widget> m_global_cursor_tracking_widget;
     WeakPtr<Widget> m_automatic_cursor_tracking_widget;
     WeakPtr<Widget> m_hovered_widget;
-    Gfx::Rect m_rect_when_windowless;
+    Gfx::IntRect m_rect_when_windowless;
     String m_title_when_windowless;
-    Vector<Gfx::Rect, 32> m_pending_paint_event_rects;
-    Gfx::Size m_size_increment;
-    Gfx::Size m_base_size;
+    Vector<Gfx::IntRect, 32> m_pending_paint_event_rects;
+    Gfx::IntSize m_size_increment;
+    Gfx::IntSize m_base_size;
     Color m_background_color { Color::WarmGray };
     WindowType m_window_type { WindowType::Normal };
+    Gfx::StandardCursor m_cursor { Gfx::StandardCursor::None };
+    Gfx::StandardCursor m_effective_cursor { Gfx::StandardCursor::None };
     bool m_is_active { false };
+    bool m_is_active_input { false };
     bool m_has_alpha_channel { false };
     bool m_double_buffering_enabled { true };
     bool m_modal { false };
     bool m_resizable { true };
+    Optional<Gfx::IntSize> m_resize_aspect_ratio {};
     bool m_minimizable { true };
     bool m_fullscreen { false };
-    bool m_show_titlebar { true };
+    bool m_frameless { false };
     bool m_layout_pending { false };
     bool m_visible_for_timer_purposes { true };
+    bool m_visible { false };
+    bool m_accessory { false };
+    bool m_moved_by_client { false };
 };
 
 }
 
-template<>
-inline bool Core::is<GUI::Window>(const Core::Object& object)
-{
-    return object.is_window();
-}
+AK_BEGIN_TYPE_TRAITS(GUI::Window)
+static bool is_type(const Core::Object& object) { return object.is_window(); }
+AK_END_TYPE_TRAITS()

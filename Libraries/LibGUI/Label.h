@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include <LibGfx/TextAlignment.h>
 #include <LibGUI/Frame.h>
+#include <LibGfx/TextAlignment.h>
 
 namespace GUI {
 
@@ -39,7 +39,7 @@ public:
     String text() const { return m_text; }
     void set_text(const StringView&);
 
-    void set_icon(Gfx::Bitmap*);
+    void set_icon(const Gfx::Bitmap*);
     const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
     Gfx::Bitmap* icon() { return m_icon.ptr(); }
 

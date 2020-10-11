@@ -37,14 +37,14 @@
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio rpath shared_buffer accept cpath unix fattr", nullptr) < 0) {
+    if (pledge("stdio rpath wpath cpath shared_buffer accept cpath unix fattr", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio rpath shared_buffer accept", nullptr) < 0) {
+    if (pledge("stdio rpath wpath cpath shared_buffer accept", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -53,35 +53,32 @@ int main(int argc, char** argv)
 
     window->set_double_buffering_enabled(false);
     window->set_title("Snake");
-    window->set_rect(100, 100, 320, 320);
+    window->resize(320, 320);
 
-    auto game = SnakeGame::construct();
-    window->set_main_widget(game);
+    auto& game = window->set_main_widget<SnakeGame>();
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
-    auto app_menu = GUI::Menu::construct("Snake");
+    auto& app_menu = menubar->add_menu("Snake");
 
-    app_menu->add_action(GUI::Action::create("New game", { Mod_None, Key_F2 }, [&](const GUI::Action&) {
-        game->reset();
+    app_menu.add_action(GUI::Action::create("New game", { Mod_None, Key_F2 }, [&](auto&) {
+        game.reset();
     }));
-    app_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
+    app_menu.add_separator();
+    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+        GUI::Application::the()->quit();
     }));
 
-    menubar->add_menu(move(app_menu));
-
-    auto help_menu = GUI::Menu::construct("Help");
-    help_menu->add_action(GUI::Action::create("About", [&](const GUI::Action&) {
+    auto& help_menu = menubar->add_menu("Help");
+    help_menu.add_action(GUI::Action::create("About", [&](auto&) {
         GUI::AboutDialog::show("Snake", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-snake.png"), window);
     }));
-    menubar->add_menu(move(help_menu));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     window->show();
 
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-snake.png"));
 
-    return app.exec();
+    return app->exec();
 }

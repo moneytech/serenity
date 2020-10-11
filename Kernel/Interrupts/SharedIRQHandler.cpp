@@ -42,7 +42,7 @@ void SharedIRQHandler::initialize(u8 interrupt_number)
 void SharedIRQHandler::register_handler(GenericInterruptHandler& handler)
 {
 #ifdef INTERRUPT_DEBUG
-    kprintf("Interrupt Handler registered @ Shared Interrupt Handler %d\n", m_interrupt_number);
+    klog() << "Interrupt Handler registered @ Shared Interrupt Handler " << interrupt_number();
 #endif
     m_handlers.set(&handler);
     enable_interrupt_vector();
@@ -50,7 +50,7 @@ void SharedIRQHandler::register_handler(GenericInterruptHandler& handler)
 void SharedIRQHandler::unregister_handler(GenericInterruptHandler& handler)
 {
 #ifdef INTERRUPT_DEBUG
-    kprintf("Interrupt Handler unregistered @ Shared Interrupt Handler %d\n", m_interrupt_number);
+    klog() << "Interrupt Handler unregistered @ Shared Interrupt Handler " << interrupt_number();
 #endif
     m_handlers.remove(&handler);
     if (m_handlers.is_empty())
@@ -62,30 +62,29 @@ bool SharedIRQHandler::eoi()
 #ifdef INTERRUPT_DEBUG
     dbg() << "EOI IRQ " << interrupt_number();
 #endif
-    InterruptManagement::the().eoi(interrupt_number());
+    m_responsible_irq_controller->eoi(*this);
     return true;
 }
 
 SharedIRQHandler::SharedIRQHandler(u8 irq)
     : GenericInterruptHandler(irq)
+    , m_responsible_irq_controller(InterruptManagement::the().get_responsible_irq_controller(irq))
 {
 #ifdef INTERRUPT_DEBUG
-    kprintf("Shared Interrupt Handler registered @ %d\n", m_interrupt_number);
+    klog() << "Shared Interrupt Handler registered @ " << interrupt_number();
 #endif
-    register_generic_interrupt_handler(irq, *this);
     disable_interrupt_vector();
 }
 
 SharedIRQHandler::~SharedIRQHandler()
 {
 #ifdef INTERRUPT_DEBUG
-    kprintf("Shared Interrupt Handler unregistered @ %d\n", interrupt_number());
+    klog() << "Shared Interrupt Handler unregistered @ " << interrupt_number();
 #endif
     disable_interrupt_vector();
-    unregister_generic_interrupt_handler(interrupt_number(), *this);
 }
 
-void SharedIRQHandler::handle_interrupt(RegisterState& regs)
+void SharedIRQHandler::handle_interrupt(const RegisterState& regs)
 {
     ASSERT_INTERRUPTS_DISABLED();
     increment_invoking_counter();
@@ -99,11 +98,8 @@ void SharedIRQHandler::handle_interrupt(RegisterState& regs)
         dbg() << "Going for Interrupt Handling @ " << i << ", Shared Interrupt " << interrupt_number();
 #endif
         ASSERT(handler != nullptr);
-        if (handler->is_enabled()) {
-            handler->increment_invoking_counter();
-            handler->handle_interrupt(regs);
-        }
-
+        handler->increment_invoking_counter();
+        handler->handle_interrupt(regs);
 #ifdef INTERRUPT_DEBUG
         dbg() << "Going for Interrupt Handling @ " << i << ", Shared Interrupt " << interrupt_number() << " - End";
 #endif
@@ -116,7 +112,7 @@ void SharedIRQHandler::enable_interrupt_vector()
     if (m_enabled)
         return;
     m_enabled = true;
-    InterruptManagement::the().enable(interrupt_number());
+    m_responsible_irq_controller->enable(*this);
 }
 
 void SharedIRQHandler::disable_interrupt_vector()
@@ -124,7 +120,7 @@ void SharedIRQHandler::disable_interrupt_vector()
     if (!m_enabled)
         return;
     m_enabled = false;
-    InterruptManagement::the().disable(interrupt_number());
+    m_responsible_irq_controller->disable(*this);
 }
 
 }

@@ -66,7 +66,7 @@ public:
         Function<bool(const char*)> accept_value;
     };
 
-    void parse(int argc, char** argv);
+    bool parse(int argc, char** argv, bool exit_on_failure = true);
     void print_usage(FILE*, const char* argv0);
 
     void add_option(Option&&);
@@ -77,6 +77,7 @@ public:
     void add_positional_argument(Arg&&);
     void add_positional_argument(const char*& value, const char* help_string, const char* name, Required required = Required::Yes);
     void add_positional_argument(int& value, const char* help_string, const char* name, Required required = Required::Yes);
+    void add_positional_argument(double& value, const char* help_string, const char* name, Required required = Required::Yes);
     void add_positional_argument(Vector<const char*>& value, const char* help_string, const char* name, Required required = Required::Yes);
 
 private:

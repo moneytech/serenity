@@ -32,6 +32,8 @@
 #include <LibCore/LocalSocket.h>
 #include <LibGUI/Model.h>
 
+namespace Inspector {
+
 class RemoteProcess;
 
 class RemoteObjectGraphModel final : public GUI::Model {
@@ -45,7 +47,7 @@ public:
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
-    virtual GUI::Variant data(const GUI::ModelIndex&, Role = Role::Display) const override;
+    virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
     virtual GUI::ModelIndex index(int row, int column, const GUI::ModelIndex& parent = GUI::ModelIndex()) const override;
     virtual GUI::ModelIndex parent_index(const GUI::ModelIndex&) const override;
     virtual void update() override;
@@ -55,6 +57,10 @@ private:
 
     RemoteProcess& m_process;
 
-    GIcon m_object_icon;
-    GIcon m_window_icon;
+    GUI::Icon m_object_icon;
+    GUI::Icon m_window_icon;
+    GUI::Icon m_layout_icon;
+    GUI::Icon m_timer_icon;
 };
+
+}

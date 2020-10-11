@@ -27,9 +27,10 @@
 #pragma once
 
 #include <AK/NonnullRefPtr.h>
+#include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/Assertions.h>
 #include <Kernel/Heap/SlabAllocator.h>
-#include <LibBareMetal/Memory/PhysicalAddress.h>
+#include <Kernel/PhysicalAddress.h>
 
 namespace Kernel {
 
@@ -38,39 +39,39 @@ class PhysicalPage {
     friend class PageDirectory;
     friend class VMObject;
 
-    MAKE_SLAB_ALLOCATED(PhysicalPage)
+    MAKE_SLAB_ALLOCATED(PhysicalPage);
+    AK_MAKE_NONMOVABLE(PhysicalPage);
+
 public:
     PhysicalAddress paddr() const { return m_paddr; }
 
     void ref()
     {
-        ASSERT(m_ref_count);
-        ++m_ref_count;
+        m_ref_count.fetch_add(1, AK::memory_order_acq_rel);
     }
 
     void unref()
     {
-        ASSERT(m_ref_count);
-        if (!--m_ref_count) {
+        if (m_ref_count.fetch_sub(1, AK::memory_order_acq_rel) == 1) {
             if (m_may_return_to_freelist)
-                move(*this).return_to_freelist();
+                return_to_freelist();
             delete this;
         }
     }
 
     static NonnullRefPtr<PhysicalPage> create(PhysicalAddress, bool supervisor, bool may_return_to_freelist = true);
 
-    u32 ref_count() const { return m_ref_count; }
+    u32 ref_count() const { return m_ref_count.load(AK::memory_order_consume); }
 
     bool is_shared_zero_page() const;
 
 private:
     PhysicalPage(PhysicalAddress paddr, bool supervisor, bool may_return_to_freelist = true);
-    ~PhysicalPage() {}
+    ~PhysicalPage() { }
 
-    void return_to_freelist() &&;
+    void return_to_freelist() const;
 
-    u32 m_ref_count { 1 };
+    Atomic<u32> m_ref_count { 1 };
     bool m_may_return_to_freelist { true };
     bool m_supervisor { false };
     PhysicalAddress m_paddr;

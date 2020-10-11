@@ -26,30 +26,35 @@
 
 #include <AK/QuickSort.h>
 #include <LibCore/DirIterator.h>
-#include <LibGfx/Font.h>
 #include <LibGUI/FontDatabase.h>
+#include <LibGfx/Font.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-static GFontDatabase* s_the;
+namespace GUI {
 
-GFontDatabase& GFontDatabase::the()
+static FontDatabase* s_the;
+
+FontDatabase& FontDatabase::the()
 {
     if (!s_the)
-        s_the = new GFontDatabase;
+        s_the = new FontDatabase;
     return *s_the;
 }
 
-GFontDatabase::GFontDatabase()
+FontDatabase::FontDatabase()
 {
     Core::DirIterator di("/res/fonts", Core::DirIterator::SkipDots);
     if (di.has_error()) {
-        fprintf(stderr, "CDirIterator: %s\n", di.error_string());
+        fprintf(stderr, "DirIterator: %s\n", di.error_string());
         exit(1);
     }
     while (di.has_next()) {
         String name = di.next_path();
+        if (!name.ends_with(".font"))
+            continue;
+
         auto path = String::format("/res/fonts/%s", name.characters());
         if (auto font = Gfx::Font::load_from_file(path)) {
             Metadata metadata;
@@ -61,22 +66,22 @@ GFontDatabase::GFontDatabase()
     }
 }
 
-GFontDatabase::~GFontDatabase()
+FontDatabase::~FontDatabase()
 {
 }
 
-void GFontDatabase::for_each_font(Function<void(const StringView&)> callback)
+void FontDatabase::for_each_font(Function<void(const StringView&)> callback)
 {
     Vector<String> names;
     names.ensure_capacity(m_name_to_metadata.size());
     for (auto& it : m_name_to_metadata)
         names.append(it.key);
-    quick_sort(names.begin(), names.end(), AK::is_less_than<String>);
+    quick_sort(names);
     for (auto& name : names)
         callback(name);
 }
 
-void GFontDatabase::for_each_fixed_width_font(Function<void(const StringView&)> callback)
+void FontDatabase::for_each_fixed_width_font(Function<void(const StringView&)> callback)
 {
     Vector<String> names;
     names.ensure_capacity(m_name_to_metadata.size());
@@ -84,15 +89,17 @@ void GFontDatabase::for_each_fixed_width_font(Function<void(const StringView&)> 
         if (it.value.is_fixed_width)
             names.append(it.key);
     }
-    quick_sort(names.begin(), names.end(), AK::is_less_than<String>);
+    quick_sort(names);
     for (auto& name : names)
         callback(name);
 }
 
-RefPtr<Gfx::Font> GFontDatabase::get_by_name(const StringView& name)
+RefPtr<Gfx::Font> FontDatabase::get_by_name(const StringView& name)
 {
     auto it = m_name_to_metadata.find(name);
     if (it == m_name_to_metadata.end())
         return nullptr;
     return Gfx::Font::load_from_file((*it).value.path);
+}
+
 }

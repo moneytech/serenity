@@ -28,6 +28,7 @@
  * SUCH DAMAGE.
  *
  */
+#include <AK/Assertions.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -61,7 +62,7 @@ static const char* determine_base(const char* p, int& base)
 static int _atob(unsigned long* vp, const char* p, int base)
 {
     unsigned long value, v1, v2;
-    const char *q;
+    const char* q;
     char tmp[20];
     int digit;
 
@@ -71,10 +72,11 @@ static int _atob(unsigned long* vp, const char* p, int base)
     }
 
     if (base == 16 && (q = strchr(p, '.')) != 0) {
-        if (q - p > (int)sizeof(tmp) - 1)
+        if (q - p > (ssize_t)sizeof(tmp) - 1)
             return 0;
-        strncpy(tmp, p, q - p);
+        memcpy(tmp, p, q - p);
         tmp[q - p] = '\0';
+
         if (!_atob(&v1, tmp, 16))
             return 0;
         ++q;
@@ -106,7 +108,7 @@ static int _atob(unsigned long* vp, const char* p, int base)
     return 1;
 }
 
-int atob(unsigned int* vp, const char* p, int base)
+static int atob(unsigned int* vp, const char* p, int base)
 {
     unsigned long v;
 
@@ -130,6 +132,9 @@ int vsscanf(const char* buf, const char* s, va_list ap)
     int count = 0;
     int width = 0;
 
+    // FIXME: This doesn't work quite right. For example, it fails to match 'SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.1\r\n'
+    //        with 'SSH-%d.%d-%[^\n]\n'
+
     while (*s && *buf) {
         while (isspace(*s))
             s++;
@@ -144,7 +149,8 @@ int vsscanf(const char* buf, const char* s, va_list ap)
                     const char* tc;
                     for (tc = s; isdigit(*s); s++)
                         ;
-                    strncpy(tmp, tc, s - tc);
+                    ASSERT((ssize_t)sizeof(tmp) >= s - tc + 1);
+                    memcpy(tmp, tc, s - tc);
                     tmp[s - tc] = '\0';
                     atob((uint32_t*)&width, tmp, 10);
                     s--;
@@ -156,7 +162,8 @@ int vsscanf(const char* buf, const char* s, va_list ap)
                 if (!width)
                     width = strcspn(buf, ISSPACE);
                 if (!noassign) {
-                    strncpy(t = va_arg(ap, char*), buf, width);
+                    // In this case, we have no way to ensure the user buffer is not overflown :(
+                    memcpy(t = va_arg(ap, char*), buf, width);
                     t[width] = '\0';
                 }
                 buf += width;
@@ -164,8 +171,8 @@ int vsscanf(const char* buf, const char* s, va_list ap)
                 if (!width)
                     width = 1;
                 if (!noassign) {
-                    strncpy(t = va_arg(ap, char*), buf, width);
-                    t[width] = '\0';
+                    memcpy(t = va_arg(ap, char*), buf, width);
+                    // No null terminator!
                 }
                 buf += width;
             } else if (strchr("dobxu", *s)) {
@@ -192,7 +199,7 @@ int vsscanf(const char* buf, const char* s, va_list ap)
                         }
                     }
                 }
-                strncpy(tmp, buf, width);
+                memcpy(tmp, buf, width);
                 tmp[width] = '\0';
                 buf += width;
                 if (!noassign) {

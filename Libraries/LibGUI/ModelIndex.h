@@ -28,6 +28,7 @@
 
 #include <AK/Traits.h>
 #include <LibGUI/Forward.h>
+#include <LibGUI/ModelRole.h>
 
 namespace GUI {
 
@@ -35,9 +36,9 @@ class ModelIndex {
     friend class Model;
 
 public:
-    ModelIndex() {}
+    ModelIndex() { }
 
-    bool is_valid() const { return m_row != -1 && m_column != -1; }
+    bool is_valid() const { return m_model && m_row != -1 && m_column != -1; }
     int row() const { return m_row; }
     int column() const { return m_column; }
 
@@ -54,6 +55,10 @@ public:
     {
         return !(*this == other);
     }
+
+    const Model* model() const { return m_model; }
+
+    Variant data(ModelRole = ModelRole::Display) const;
 
 private:
     ModelIndex(const Model& model, int row, int column, void* internal_data)
@@ -75,8 +80,15 @@ const LogStream& operator<<(const LogStream&, const ModelIndex&);
 }
 
 namespace AK {
+
+template<>
+struct Formatter<GUI::ModelIndex> : Formatter<StringView> {
+    void format(TypeErasedFormatParams&, FormatBuilder&, const GUI::ModelIndex&);
+};
+
 template<>
 struct Traits<GUI::ModelIndex> : public GenericTraits<GUI::ModelIndex> {
     static unsigned hash(const GUI::ModelIndex& index) { return pair_int_hash(index.row(), index.column()); }
 };
+
 }

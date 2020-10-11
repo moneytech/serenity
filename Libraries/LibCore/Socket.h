@@ -27,6 +27,7 @@
 #pragma once
 
 #include <AK/Function.h>
+#include <AK/Span.h>
 #include <LibCore/IODevice.h>
 #include <LibCore/SocketAddress.h>
 
@@ -45,12 +46,12 @@ public:
 
     Type type() const { return m_type; }
 
-    bool connect(const String& hostname, int port);
+    virtual bool connect(const String& hostname, int port);
     bool connect(const SocketAddress&, int port);
     bool connect(const SocketAddress&);
 
     ByteBuffer receive(int max_size);
-    bool send(const ByteBuffer&);
+    bool send(ReadonlyBytes);
 
     bool is_connected() const { return m_connected; }
     void set_blocking(bool blocking);
@@ -74,10 +75,10 @@ protected:
     bool m_connected { false };
 
     virtual void did_update_fd(int) override;
+    virtual bool common_connect(const struct sockaddr*, socklen_t);
 
 private:
     virtual bool open(IODevice::OpenMode) override { ASSERT_NOT_REACHED(); }
-    bool common_connect(const struct sockaddr*, socklen_t);
     void ensure_read_notifier();
 
     Type m_type { Type::Invalid };

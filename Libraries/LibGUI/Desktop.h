@@ -38,16 +38,24 @@ public:
     static Desktop& the();
     Desktop();
 
+    void set_background_color(const StringView& background_color);
+
+    void set_wallpaper_mode(const StringView& mode);
+
     String wallpaper() const;
-    bool set_wallpaper(const StringView& path);
+    bool set_wallpaper(const StringView& path, bool save_config = true);
 
-    Gfx::Rect rect() const { return m_rect; }
-    void did_receive_screen_rect(Badge<WindowServerConnection>, const Gfx::Rect&);
+    Gfx::IntRect rect() const { return m_rect; }
 
-    Function<void(const Gfx::Rect&)> on_rect_change;
+    int taskbar_height() const { return 28; }
+    int menubar_height() const { return 19; }
+
+    void did_receive_screen_rect(Badge<WindowServerConnection>, const Gfx::IntRect&);
+
+    Function<void(const Gfx::IntRect&)> on_rect_change;
 
 private:
-    Gfx::Rect m_rect;
+    Gfx::IntRect m_rect;
 };
 
 }

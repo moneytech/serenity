@@ -27,12 +27,13 @@
 #include <AK/Assertions.h>
 #include <AK/Atomic.h>
 #include <AK/StdLibExtras.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <limits.h>
 #include <pthread.h>
 #include <serenity.h>
 #include <signal.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -43,18 +44,46 @@ namespace {
 using PthreadAttrImpl = Syscall::SC_create_thread_params;
 } // end anonymous namespace
 
-constexpr size_t required_stack_alignment = 4 * MB;
+constexpr size_t required_stack_alignment = 4 * MiB;
 constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
-constexpr size_t highest_reasonable_stack_size = 8 * MB; // That's the default in Ubuntu?
+constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
 
 extern "C" {
 
-static int create_thread(void* (*entry)(void*), void* argument, void* thread_params)
+static void* pthread_create_helper(void* (*routine)(void*), void* argument)
 {
-    return syscall(SC_create_thread, entry, argument, thread_params);
+    void* ret_val = routine(argument);
+    pthread_exit(ret_val);
+    return nullptr;
 }
 
-static void exit_thread(void* code)
+static int create_thread(void* (*entry)(void*), void* argument, PthreadAttrImpl* thread_params)
+{
+    void** stack = (void**)((uintptr_t)thread_params->m_stack_location + thread_params->m_stack_size);
+
+    auto push_on_stack = [&](void* data) {
+        stack--;
+        *stack = data;
+        thread_params->m_stack_size -= sizeof(void*);
+    };
+
+    // We set up the stack for pthread_create_helper.
+    // Note that we need to align the stack to 16B, accounting for
+    // the fact that we also push 8 bytes.
+    while (((uintptr_t)stack - 8) % 16 != 0)
+        push_on_stack(nullptr);
+
+    push_on_stack(argument);
+    push_on_stack((void*)entry);
+    ASSERT((uintptr_t)stack % 16 == 0);
+
+    // Push a fake return address
+    push_on_stack(nullptr);
+
+    return syscall(SC_create_thread, pthread_create_helper, thread_params);
+}
+
+[[noreturn]] static void exit_thread(void* code)
 {
     syscall(SC_exit_thread, code);
     ASSERT_NOT_REACHED();
@@ -456,14 +485,20 @@ int pthread_cond_destroy(pthread_cond_t*)
     return 0;
 }
 
-int pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex)
+static int cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex, const struct timespec* abstime)
 {
     i32 value = cond->value;
     cond->previous = value;
     pthread_mutex_unlock(mutex);
-    int rc = futex(&cond->value, FUTEX_WAIT, value, nullptr);
-    ASSERT(rc == 0);
+    int rc = futex(&cond->value, FUTEX_WAIT, value, abstime);
     pthread_mutex_lock(mutex);
+    return rc;
+}
+
+int pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex)
+{
+    int rc = cond_wait(cond, mutex, nullptr);
+    ASSERT(rc == 0);
     return 0;
 }
 
@@ -486,10 +521,7 @@ int pthread_condattr_setclock(pthread_condattr_t* attr, clockid_t clock)
 
 int pthread_cond_timedwait(pthread_cond_t* cond, pthread_mutex_t* mutex, const struct timespec* abstime)
 {
-    // FIXME: Implement timeout.
-    (void)abstime;
-    pthread_cond_wait(cond, mutex);
-    return 0;
+    return cond_wait(cond, mutex, abstime);
 }
 
 int pthread_cond_signal(pthread_cond_t* cond)

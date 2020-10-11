@@ -36,6 +36,9 @@
 TextWidget::TextWidget(const StringView& text)
     : m_text(text)
 {
+    set_frame_thickness(0);
+    set_frame_shadow(Gfx::FrameShadow::Plain);
+    set_frame_shape(Gfx::FrameShape::NoFrame);
 }
 
 TextWidget::~TextWidget()
@@ -62,7 +65,7 @@ void TextWidget::paint_event(GUI::PaintEvent& event)
     if (frame_thickness() > 0)
         indent = font().glyph_width('x') / 2;
 
-    for (int i = 0; i < m_lines.size(); i++) {
+    for (size_t i = 0; i < m_lines.size(); i++) {
         auto& line = m_lines[i];
 
         auto text_rect = frame_inner_rect();

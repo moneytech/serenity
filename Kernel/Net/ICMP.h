@@ -26,8 +26,8 @@
 
 #pragma once
 
+#include <AK/MACAddress.h>
 #include <Kernel/Net/IPv4.h>
-#include <Kernel/Net/MACAddress.h>
 
 struct ICMPType {
     enum {
@@ -39,8 +39,8 @@ struct ICMPType {
 class [[gnu::packed]] ICMPHeader
 {
 public:
-    ICMPHeader() {}
-    ~ICMPHeader() {}
+    ICMPHeader() { }
+    ~ICMPHeader() { }
 
     u8 type() const { return m_type; }
     void set_type(u8 b) { m_type = b; }

@@ -29,30 +29,34 @@
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <AK/String.h>
-#include <LibCore/Forward.h>
+#include <LibCore/Object.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/Shortcut.h>
+#include <LibGUI/Widget.h>
 #include <LibGfx/Forward.h>
 
 namespace GUI {
 
-class Application {
+class Application : public Core::Object {
+    C_OBJECT(Application);
+
 public:
-    static Application& the();
-    Application(int argc, char** argv);
+    static Application* the();
+
     ~Application();
 
     int exec();
     void quit(int = 0);
 
-    void set_menubar(OwnPtr<MenuBar>&&);
+    void set_menubar(RefPtr<MenuBar>);
     Action* action_for_key_event(const KeyEvent&);
 
     void register_global_shortcut_action(Badge<Action>, Action&);
     void unregister_global_shortcut_action(Badge<Action>, Action&);
 
-    void show_tooltip(const StringView&, const Gfx::Point& screen_location);
+    void show_tooltip(const StringView&, const Gfx::IntPoint& screen_location, const Widget* tooltip_source_widget);
     void hide_tooltip();
+    Widget* tooltip_source_widget() { return m_tooltip_source_widget; };
 
     bool quit_when_last_window_deleted() const { return m_quit_when_last_window_deleted; }
     void set_quit_when_last_window_deleted(bool b) { m_quit_when_last_window_deleted = b; }
@@ -68,15 +72,21 @@ public:
 
     void set_system_palette(SharedBuffer&);
 
+    bool focus_debugging_enabled() const { return m_focus_debugging_enabled; }
+
 private:
+    Application(int argc, char** argv);
+
     OwnPtr<Core::EventLoop> m_event_loop;
-    OwnPtr<MenuBar> m_menubar;
+    RefPtr<MenuBar> m_menubar;
     RefPtr<Gfx::PaletteImpl> m_palette;
     RefPtr<Gfx::PaletteImpl> m_system_palette;
     HashMap<Shortcut, Action*> m_global_shortcut_actions;
     class TooltipWindow;
     RefPtr<TooltipWindow> m_tooltip_window;
+    RefPtr<Widget> m_tooltip_source_widget;
     bool m_quit_when_last_window_deleted { true };
+    bool m_focus_debugging_enabled { false };
     String m_invoked_as;
     Vector<String> m_args;
 };

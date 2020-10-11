@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Singleton.h>
 #include <Kernel/Devices/RandomDevice.h>
 #include <Kernel/Net/NetworkAdapter.h>
 #include <Kernel/Net/Routing.h>
@@ -34,18 +35,17 @@
 
 namespace Kernel {
 
-void UDPSocket::for_each(Function<void(UDPSocket&)> callback)
+void UDPSocket::for_each(Function<void(const UDPSocket&)> callback)
 {
-    LOCKER(sockets_by_port().lock());
+    LOCKER(sockets_by_port().lock(), Lock::Mode::Shared);
     for (auto it : sockets_by_port().resource())
         callback(*it.value);
 }
 
+static AK::Singleton<Lockable<HashMap<u16, UDPSocket*>>> s_map;
+
 Lockable<HashMap<u16, UDPSocket*>>& UDPSocket::sockets_by_port()
 {
-    static Lockable<HashMap<u16, UDPSocket*>>* s_map;
-    if (!s_map)
-        s_map = new Lockable<HashMap<u16, UDPSocket*>>;
     return *s_map;
 }
 
@@ -53,7 +53,7 @@ SocketHandle<UDPSocket> UDPSocket::from_port(u16 port)
 {
     RefPtr<UDPSocket> socket;
     {
-        LOCKER(sockets_by_port().lock());
+        LOCKER(sockets_by_port().lock(), Lock::Mode::Shared);
         auto it = sockets_by_port().resource().find(port);
         if (it == sockets_by_port().resource().end())
             return {};
@@ -79,34 +79,33 @@ NonnullRefPtr<UDPSocket> UDPSocket::create(int protocol)
     return adopt(*new UDPSocket(protocol));
 }
 
-int UDPSocket::protocol_receive(const KBuffer& packet_buffer, void* buffer, size_t buffer_size, int flags)
+KResultOr<size_t> UDPSocket::protocol_receive(const KBuffer& packet_buffer, UserOrKernelBuffer& buffer, size_t buffer_size, int flags)
 {
     (void)flags;
     auto& ipv4_packet = *(const IPv4Packet*)(packet_buffer.data());
     auto& udp_packet = *static_cast<const UDPPacket*>(ipv4_packet.payload());
     ASSERT(udp_packet.length() >= sizeof(UDPPacket)); // FIXME: This should be rejected earlier.
     ASSERT(buffer_size >= (udp_packet.length() - sizeof(UDPPacket)));
-    memcpy(buffer, udp_packet.payload(), udp_packet.length() - sizeof(UDPPacket));
+    if (!buffer.write(udp_packet.payload(), udp_packet.length() - sizeof(UDPPacket)))
+        return KResult(-EFAULT);
     return udp_packet.length() - sizeof(UDPPacket);
 }
 
-int UDPSocket::protocol_send(const void* data, size_t data_length)
+KResultOr<size_t> UDPSocket::protocol_send(const UserOrKernelBuffer& data, size_t data_length)
 {
-    auto routing_decision = route_to(peer_address(), local_address());
+    auto routing_decision = route_to(peer_address(), local_address(), bound_interface());
     if (routing_decision.is_zero())
-        return -EHOSTUNREACH;
+        return KResult(-EHOSTUNREACH);
     auto buffer = ByteBuffer::create_zeroed(sizeof(UDPPacket) + data_length);
     auto& udp_packet = *(UDPPacket*)(buffer.data());
     udp_packet.set_source_port(local_port());
     udp_packet.set_destination_port(peer_port());
     udp_packet.set_length(sizeof(UDPPacket) + data_length);
-    memcpy(udp_packet.payload(), data, data_length);
-    kprintf("sending as udp packet from %s:%u to %s:%u!\n",
-        routing_decision.adapter->ipv4_address().to_string().characters(),
-        local_port(),
-        peer_address().to_string().characters(),
-        peer_port());
-    routing_decision.adapter->send_ipv4(routing_decision.next_hop, peer_address(), IPv4Protocol::UDP, buffer.data(), buffer.size(), ttl());
+    if (!data.read(udp_packet.payload(), data_length))
+        return KResult(-EFAULT);
+    klog() << "sending as udp packet from " << routing_decision.adapter->ipv4_address().to_string().characters() << ":" << local_port() << " to " << peer_address().to_string().characters() << ":" << peer_port() << "!";
+    auto udp_packet_buffer = UserOrKernelBuffer::for_kernel_buffer((u8*)&udp_packet);
+    routing_decision.adapter->send_ipv4(routing_decision.next_hop, peer_address(), IPv4Protocol::UDP, udp_packet_buffer, buffer.size(), ttl());
     return data_length;
 }
 

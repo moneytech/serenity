@@ -29,7 +29,7 @@
 #include <AK/String.h>
 #include <AK/Traits.h>
 #include <AK/Vector.h>
-#include <LibBareMetal/Memory/VirtualAddress.h>
+#include <Kernel/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -37,7 +37,7 @@ class Range {
     friend class RangeAllocator;
 
 public:
-    Range() {}
+    Range() { }
     Range(VirtualAddress base, size_t size)
         : m_base(base)
         , m_size(size)
@@ -89,6 +89,11 @@ public:
     void deallocate(Range);
 
     void dump() const;
+
+    bool contains(const Range& range) const
+    {
+        return m_total_range.contains(range);
+    }
 
 private:
     void carve_at_index(int, const Range&);

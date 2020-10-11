@@ -57,18 +57,11 @@ String IRCChannelMemberListModel::column_name(int column) const
     ASSERT_NOT_REACHED();
 }
 
-GUI::Model::ColumnMetadata IRCChannelMemberListModel::column_metadata(int column) const
+GUI::Variant IRCChannelMemberListModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
 {
-    switch (column) {
-    case Column::Name:
-        return { 70, Gfx::TextAlignment::CenterLeft };
-    }
-    ASSERT_NOT_REACHED();
-}
-
-GUI::Variant IRCChannelMemberListModel::data(const GUI::ModelIndex& index, Role role) const
-{
-    if (role == Role::Display) {
+    if (role == GUI::ModelRole::TextAlignment)
+        return Gfx::TextAlignment::CenterLeft;
+    if (role == GUI::ModelRole::Display) {
         switch (index.column()) {
         case Column::Name:
             return m_channel.member_at(index.row());
@@ -80,4 +73,9 @@ GUI::Variant IRCChannelMemberListModel::data(const GUI::ModelIndex& index, Role 
 void IRCChannelMemberListModel::update()
 {
     did_update();
+}
+
+String IRCChannelMemberListModel::nick_at(const GUI::ModelIndex& index) const
+{
+    return data(index, GUI::ModelRole::Display).to_string();
 }

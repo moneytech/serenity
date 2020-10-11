@@ -25,13 +25,18 @@
  */
 
 #include "Project.h"
-#include <AK/FileSystemPath.h>
+#include "HackStudio.h"
+#include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
+#include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
+namespace HackStudio {
 
 struct Project::ProjectTreeNode : public RefCounted<ProjectTreeNode> {
     enum class Type {
@@ -60,7 +65,7 @@ struct Project::ProjectTreeNode : public RefCounted<ProjectTreeNode> {
     {
         if (type == Type::File)
             return;
-        quick_sort(children.begin(), children.end(), [](auto& a, auto& b) {
+        quick_sort(children, [](auto& a, auto& b) {
             return a->name < b->name;
         });
         for (auto& child : children)
@@ -94,29 +99,34 @@ public:
         return 1;
     }
 
-    virtual GUI::Variant data(const GUI::ModelIndex& index, Role role = Role::Display) const override
+    virtual GUI::Variant data(const GUI::ModelIndex& index, GUI::ModelRole role) const override
     {
         auto* node = static_cast<Project::ProjectTreeNode*>(index.internal_data());
-        if (role == Role::Display) {
+        if (role == GUI::ModelRole::Display) {
             return node->name;
         }
-        if (role == Role::Custom) {
+        if (role == GUI::ModelRole::Custom) {
             return node->path;
         }
-        if (role == Role::Icon) {
+        if (role == GUI::ModelRole::Icon) {
             if (node->type == Project::ProjectTreeNode::Type::Project)
                 return m_project.m_project_icon;
             if (node->type == Project::ProjectTreeNode::Type::Directory)
                 return m_project.m_directory_icon;
             if (node->name.ends_with(".cpp"))
                 return m_project.m_cplusplus_icon;
+            if (node->name.ends_with(".frm"))
+                return m_project.m_form_icon;
             if (node->name.ends_with(".h"))
                 return m_project.m_header_icon;
+            if (node->name.ends_with(".hsp"))
+                return m_project.m_hackstudio_icon;
+            if (node->name.ends_with(".js"))
+                return m_project.m_javascript_icon;
             return m_project.m_file_icon;
         }
-        if (role == Role::Font) {
-            extern String g_currently_open_file;
-            if (node->name == g_currently_open_file)
+        if (role == GUI::ModelRole::Font) {
+            if (node->name == currently_open_file())
                 return Gfx::Font::default_bold_font();
             return {};
         }
@@ -146,7 +156,7 @@ public:
             return {};
         }
 
-        for (int row = 0; row < node.parent->parent->children.size(); ++row) {
+        for (size_t row = 0; row < node.parent->parent->children.size(); ++row) {
             if (node.parent->parent->children[row].ptr() == node.parent)
                 return create_index(row, 0, node.parent);
         }
@@ -167,13 +177,16 @@ private:
 Project::Project(const String& path, Vector<String>&& filenames)
     : m_path(path)
 {
-    m_name = FileSystemPath(m_path).basename();
+    m_name = LexicalPath(m_path).basename();
 
-    m_file_icon = GIcon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-unknown.png"));
-    m_cplusplus_icon = GIcon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-cplusplus.png"));
-    m_header_icon = GIcon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-header.png"));
-    m_directory_icon = GIcon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-folder.png"));
-    m_project_icon = GIcon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-hack-studio.png"));
+    m_file_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-unknown.png"));
+    m_cplusplus_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-cplusplus.png"));
+    m_header_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-header.png"));
+    m_directory_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-folder.png"));
+    m_project_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/hackstudio-project.png"));
+    m_javascript_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-javascript.png"));
+    m_hackstudio_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-hackstudio.png"));
+    m_form_icon = GUI::Icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-form.png"));
 
     for (auto& filename : filenames) {
         m_files.append(ProjectFile::construct_with_name(filename));
@@ -194,15 +207,53 @@ OwnPtr<Project> Project::load_from_file(const String& path)
     if (!file->open(Core::File::ReadOnly))
         return nullptr;
 
+    auto type = ProjectType::Cpp;
     Vector<String> files;
+
+    auto add_glob = [&](String path) {
+        auto split = path.split('*', true);
+        for (auto& item : split) {
+            dbg() << item;
+        }
+        ASSERT(split.size() == 2);
+        auto cwd = getcwd(nullptr, 0);
+        Core::DirIterator it(cwd, Core::DirIterator::Flags::SkipParentAndBaseDir);
+        while (it.has_next()) {
+            auto path = it.next_path();
+            if (!split[0].is_empty() && !path.starts_with(split[0]))
+                continue;
+
+            if (!split[1].is_empty() && !path.ends_with(split[1]))
+                continue;
+
+            files.append(path);
+        }
+    };
+
     for (;;) {
         auto line = file->read_line(1024);
         if (line.is_null())
             break;
-        files.append(String::copy(line, Chomp));
+
+        auto path = String::copy(line, Chomp);
+        if (path.contains("*"))
+            add_glob(path);
+        else
+            files.append(path);
     }
 
-    return OwnPtr(new Project(path, move(files)));
+    for (auto& file : files) {
+        if (file.ends_with(".js")) {
+            type = ProjectType::JavaScript;
+            break;
+        }
+    }
+
+    quick_sort(files);
+
+    auto project = adopt_own(*new Project(path, move(files)));
+    project->m_type = type;
+    return project;
 }
 
 bool Project::add_file(const String& filename)
@@ -243,10 +294,21 @@ bool Project::save()
 ProjectFile* Project::get_file(const String& filename)
 {
     for (auto& file : m_files) {
-        if (FileSystemPath(file.name()).string() == FileSystemPath(filename).string())
+        if (LexicalPath(file.name()).string() == LexicalPath(filename).string())
             return &file;
     }
     return nullptr;
+}
+
+String Project::default_file() const
+{
+    if (m_type == ProjectType::Cpp)
+        return "main.cpp";
+
+    if (m_files.size() > 0)
+        return m_files.first().name();
+
+    ASSERT_NOT_REACHED();
 }
 
 void Project::rebuild_tree()
@@ -256,11 +318,11 @@ void Project::rebuild_tree()
     root->type = ProjectTreeNode::Type::Project;
 
     for (auto& file : m_files) {
-        FileSystemPath path(file.name());
+        LexicalPath path(file.name());
         ProjectTreeNode* current = root.ptr();
         StringBuilder partial_path;
 
-        for (int i = 0; i < path.parts().size(); ++i) {
+        for (size_t i = 0; i < path.parts().size(); ++i) {
             auto& part = path.parts().at(i);
             if (part == ".")
                 continue;
@@ -291,11 +353,11 @@ void Project::rebuild_tree()
 #if 0
     Function<void(ProjectTreeNode&, int indent)> dump_tree = [&](ProjectTreeNode& node, int indent) {
         for (int i = 0; i < indent; ++i)
-            printf(" ");
+            new_out(" ");
         if (node.name.is_null())
-            printf("(null)\n");
+            outln("(null)");
         else
-            printf("%s\n", node.name.characters());
+            outln("{}", node.name);
         for (auto& child : node.children) {
             dump_tree(*child, indent + 2);
         }
@@ -306,4 +368,6 @@ void Project::rebuild_tree()
 
     m_root_node = move(root);
     m_model->update();
+}
+
 }

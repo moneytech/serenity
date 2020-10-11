@@ -41,11 +41,12 @@ public:
     virtual ~Thread();
 
     void start();
-    void quit(void *code = 0);
+    void quit(void* code = 0);
+    pthread_t tid() const { return m_tid; }
 
 private:
     Function<int()> m_action;
-    pthread_t m_tid;
+    pthread_t m_tid { 0 };
     String m_thread_name;
 };
 

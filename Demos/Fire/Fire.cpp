@@ -70,25 +70,6 @@ static const Color s_palette[] = {
     Color(0xCF, 0xCF, 0x6F), Color(0xEF, 0xEF, 0xC7), Color(0xFF, 0xFF, 0xFF)
 };
 
-/* Random functions...
- * These are from musl libc's prng/rand.c
-*/
-static uint64_t seed;
-
-void my_srand(unsigned s)
-{
-    seed = s - 1;
-}
-
-static int my_rand(void)
-{
-    seed = 6364136223846793005ULL * seed + 1;
-    return seed >> 33;
-}
-
-/*
- * Fire Widget
-*/
 class Fire : public GUI::Widget {
     C_OBJECT(Fire)
 public:
@@ -129,13 +110,13 @@ Fire::Fire()
     cycles = 0;
     phase = 0;
 
-    my_srand(time(nullptr));
+    srand(time(nullptr));
     stop_timer();
     start_timer(20);
 
     /* Draw fire "source" on bottom row of pixels */
     for (int i = 0; i < FIRE_WIDTH; i++)
-        bitmap->bits(bitmap->height() - 1)[i] = FIRE_MAX;
+        bitmap->scanline_u8(bitmap->height() - 1)[i] = FIRE_MAX;
 
     /* Set off initital paint event */
     //update();
@@ -170,10 +151,10 @@ void Fire::timer_event(Core::TimerEvent&)
     /* Paint our palettized buffer to screen */
     for (int px = 0 + phase; px < FIRE_WIDTH; px += 2) {
         for (int py = 1; py < 200; py++) {
-            int rnd = my_rand() % 3;
+            int rnd = rand() % 3;
 
             /* Calculate new pixel value, don't go below 0 */
-            u8 nv = bitmap->bits(py)[px];
+            u8 nv = bitmap->scanline_u8(py)[px];
             if (nv > 0)
                 nv -= (rnd & 1);
 
@@ -184,12 +165,12 @@ void Fire::timer_event(Core::TimerEvent&)
             else if (epx > FIRE_WIDTH)
                 epx = FIRE_WIDTH;
 
-            bitmap->bits(py - 1)[epx] = nv;
+            bitmap->scanline_u8(py - 1)[epx] = nv;
         }
     }
 
     if ((cycles % 50) == 0) {
-        dbgprintf("%d total cycles. finished 50 in %d ms, avg %d ms\n", cycles, timeAvg, timeAvg / 50);
+        dbgln("{} total cycles. finished 50 in {} ms, avg {} ms", cycles, timeAvg, timeAvg / 50);
         stats->set_text(String::format("%d ms", timeAvg / 50));
         timeAvg = 0;
     }
@@ -197,9 +178,6 @@ void Fire::timer_event(Core::TimerEvent&)
     update();
 }
 
-/*
- * Mouse handling events
-*/
 void Fire::mousedown_event(GUI::MouseEvent& event)
 {
     if (event.button() == GUI::MouseButton::Left)
@@ -215,10 +193,10 @@ void Fire::mousemove_event(GUI::MouseEvent& event)
         if (event.y() >= 2 && event.y() < 398 && event.x() <= 638) {
             int ypos = event.y() / 2;
             int xpos = event.x() / 2;
-            bitmap->bits(ypos - 1)[xpos] = FIRE_MAX + 5;
-            bitmap->bits(ypos - 1)[xpos + 1] = FIRE_MAX + 5;
-            bitmap->bits(ypos)[xpos] = FIRE_MAX + 5;
-            bitmap->bits(ypos)[xpos + 1] = FIRE_MAX + 5;
+            bitmap->scanline_u8(ypos - 1)[xpos] = FIRE_MAX + 5;
+            bitmap->scanline_u8(ypos - 1)[xpos + 1] = FIRE_MAX + 5;
+            bitmap->scanline_u8(ypos)[xpos] = FIRE_MAX + 5;
+            bitmap->scanline_u8(ypos)[xpos + 1] = FIRE_MAX + 5;
         }
     }
 
@@ -233,30 +211,25 @@ void Fire::mouseup_event(GUI::MouseEvent& event)
     return GUI::Widget::mouseup_event(event);
 }
 
-/*
- * Main
-*/
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     auto window = GUI::Window::construct();
     window->set_double_buffering_enabled(false);
     window->set_title("Fire");
     window->set_resizable(false);
-    window->set_rect(100, 100, 640, 400);
+    window->resize(640, 400);
 
-    auto fire = Fire::construct();
-    window->set_main_widget(fire);
+    auto& fire = window->set_main_widget<Fire>();
 
-    auto time = fire->add<GUI::Label>();
-    time->set_relative_rect({ 0, 4, 40, 10 });
-    time->move_by({ window->width() - time->width(), 0 });
-    time->set_foreground_color(Color::from_rgb(0x444444));
-    fire->set_stat_label(time);
+    auto& time = fire.add<GUI::Label>();
+    time.set_relative_rect({ 0, 4, 40, 10 });
+    time.move_by({ window->width() - time.width(), 0 });
+    fire.set_stat_label(time);
 
     window->show();
-    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-demo.png"));
+    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-fire.png"));
 
-    return app.exec();
+    return app->exec();
 }

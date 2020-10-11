@@ -32,18 +32,18 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
-#include <AK/FileSystemPath.h>
 #include <AK/HashMap.h>
+#include <AK/LexicalPath.h>
 #include <AK/RefPtr.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
-#include <LibELF/ELFDynamicLoader.h>
+#include <LibELF/DynamicLoader.h>
 
 // NOTE: The string here should never include a trailing newline (according to POSIX)
 String g_dlerror_msg;
 
-HashMap<String, RefPtr<ELFDynamicLoader>> g_elf_objects;
+HashMap<String, RefPtr<ELF::DynamicLoader>> g_elf_objects;
 
 extern "C" {
 
@@ -70,11 +70,11 @@ void* dlopen(const char* filename, int flags)
         ASSERT_NOT_REACHED();
     }
 
-    FileSystemPath file_path(filename);
+    auto basename = LexicalPath(filename).basename();
 
-    auto existing_elf_object = g_elf_objects.get(file_path.basename());
+    auto existing_elf_object = g_elf_objects.get(basename);
     if (existing_elf_object.has_value()) {
-        return const_cast<ELFDynamicLoader*>(existing_elf_object.value());
+        return const_cast<ELF::DynamicLoader*>(existing_elf_object.value());
     }
 
     int fd = open(filename, O_RDONLY);
@@ -85,7 +85,8 @@ void* dlopen(const char* filename, int flags)
 
     ScopeGuard close_fd_guard([fd]() { close(fd); });
 
-    struct stat file_stats{};
+    struct stat file_stats {
+    };
 
     int ret = fstat(fd, &file_stats);
     if (ret < 0) {
@@ -93,7 +94,7 @@ void* dlopen(const char* filename, int flags)
         return nullptr;
     }
 
-    auto loader = ELFDynamicLoader::construct(filename, fd, file_stats.st_size);
+    auto loader = ELF::DynamicLoader::construct(filename, fd, file_stats.st_size);
 
     if (!loader->is_valid()) {
         g_dlerror_msg = String::format("%s is not a valid ELF dynamic shared object!", filename);
@@ -105,18 +106,18 @@ void* dlopen(const char* filename, int flags)
         return nullptr;
     }
 
-    g_elf_objects.set(file_path.basename(), move(loader));
+    g_elf_objects.set(basename, move(loader));
     g_dlerror_msg = "Successfully loaded ELF object.";
 
     // we have one refcount already
-    return const_cast<ELFDynamicLoader*>(g_elf_objects.get(file_path.basename()).value());
+    return const_cast<ELF::DynamicLoader*>(g_elf_objects.get(basename).value());
 }
 
 void* dlsym(void* handle, const char* symbol_name)
 {
     // FIXME: When called with a NULL handle we're supposed to search every dso in the process... that'll get expensive
     ASSERT(handle);
-    auto* dso = reinterpret_cast<ELFDynamicLoader*>(handle);
+    auto* dso = reinterpret_cast<ELF::DynamicLoader*>(handle);
     void* symbol = dso->symbol_for_name(symbol_name);
     if (!symbol) {
         g_dlerror_msg = "Symbol not found";

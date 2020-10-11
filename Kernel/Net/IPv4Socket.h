@@ -27,7 +27,7 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <AK/SinglyLinkedList.h>
+#include <AK/SinglyLinkedListWithCount.h>
 #include <Kernel/DoubleBuffer.h>
 #include <Kernel/KBuffer.h>
 #include <Kernel/Lock.h>
@@ -48,24 +48,24 @@ public:
 
     static Lockable<HashTable<IPv4Socket*>>& all_sockets();
 
-    virtual void close() override;
-    virtual KResult bind(const sockaddr*, socklen_t) override;
-    virtual KResult connect(FileDescription&, const sockaddr*, socklen_t, ShouldBlock = ShouldBlock::Yes) override;
-    virtual KResult listen(int) override;
+    virtual KResult close() override;
+    virtual KResult bind(Userspace<const sockaddr*>, socklen_t) override;
+    virtual KResult connect(FileDescription&, Userspace<const sockaddr*>, socklen_t, ShouldBlock = ShouldBlock::Yes) override;
+    virtual KResult listen(size_t) override;
     virtual void get_local_address(sockaddr*, socklen_t*) override;
     virtual void get_peer_address(sockaddr*, socklen_t*) override;
     virtual void attach(FileDescription&) override;
     virtual void detach(FileDescription&) override;
-    virtual bool can_read(const FileDescription&) const override;
-    virtual bool can_write(const FileDescription&) const override;
-    virtual ssize_t sendto(FileDescription&, const void*, size_t, int, const sockaddr*, socklen_t) override;
-    virtual ssize_t recvfrom(FileDescription&, void*, size_t, int flags, sockaddr*, socklen_t*) override;
-    virtual KResult setsockopt(int level, int option, const void*, socklen_t) override;
-    virtual KResult getsockopt(FileDescription&, int level, int option, void*, socklen_t*) override;
+    virtual bool can_read(const FileDescription&, size_t) const override;
+    virtual bool can_write(const FileDescription&, size_t) const override;
+    virtual KResultOr<size_t> sendto(FileDescription&, const UserOrKernelBuffer&, size_t, int, Userspace<const sockaddr*>, socklen_t) override;
+    virtual KResultOr<size_t> recvfrom(FileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, timeval&) override;
+    virtual KResult setsockopt(int level, int option, Userspace<const void*>, socklen_t) override;
+    virtual KResult getsockopt(FileDescription&, int level, int option, Userspace<void*>, Userspace<socklen_t*>) override;
 
-    virtual int ioctl(FileDescription&, unsigned request, unsigned arg) override;
+    virtual int ioctl(FileDescription&, unsigned request, FlatPtr arg) override;
 
-    bool did_receive(const IPv4Address& peer_address, u16 peer_port, KBuffer&&);
+    bool did_receive(const IPv4Address& peer_address, u16 peer_port, KBuffer&&, const timeval&);
 
     const IPv4Address& local_address() const { return m_local_address; }
     u16 local_port() const { return m_local_port; }
@@ -96,8 +96,8 @@ protected:
 
     virtual KResult protocol_bind() { return KSuccess; }
     virtual KResult protocol_listen() { return KSuccess; }
-    virtual int protocol_receive(const KBuffer&, void*, size_t, int) { return -ENOTIMPL; }
-    virtual int protocol_send(const void*, size_t) { return -ENOTIMPL; }
+    virtual KResultOr<size_t> protocol_receive(const KBuffer&, UserOrKernelBuffer&, size_t, int) { return -ENOTIMPL; }
+    virtual KResultOr<size_t> protocol_send(const UserOrKernelBuffer&, size_t) { return -ENOTIMPL; }
     virtual KResult protocol_connect(FileDescription&, ShouldBlock) { return KSuccess; }
     virtual int protocol_allocate_local_port() { return 0; }
     virtual bool protocol_is_disconnected() const { return false; }
@@ -110,8 +110,8 @@ protected:
 private:
     virtual bool is_ipv4() const override { return true; }
 
-    ssize_t receive_byte_buffered(FileDescription&, void* buffer, size_t buffer_length, int flags, sockaddr*, socklen_t*);
-    ssize_t receive_packet_buffered(FileDescription&, void* buffer, size_t buffer_length, int flags, sockaddr*, socklen_t*);
+    KResultOr<size_t> receive_byte_buffered(FileDescription&, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>);
+    KResultOr<size_t> receive_packet_buffered(FileDescription&, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, timeval&);
 
     IPv4Address m_local_address;
     IPv4Address m_peer_address;
@@ -119,10 +119,11 @@ private:
     struct ReceivedPacket {
         IPv4Address peer_address;
         u16 peer_port;
+        timeval timestamp;
         Optional<KBuffer> data;
     };
 
-    SinglyLinkedList<ReceivedPacket> m_receive_queue;
+    SinglyLinkedListWithCount<ReceivedPacket> m_receive_queue;
 
     DoubleBuffer m_receive_buffer;
 

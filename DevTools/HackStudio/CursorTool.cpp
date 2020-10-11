@@ -31,9 +31,15 @@
 #include <AK/LogStream.h>
 #include <LibGfx/Palette.h>
 
+//#define DEBUG_CURSOR_TOOL
+
+namespace HackStudio {
+
 void CursorTool::on_mousedown(GUI::MouseEvent& event)
 {
-    dbg() << "CursorTool::on_mousedown";
+#ifdef DEBUG_CURSOR_TOOL
+    dbgln("CursorTool::on_mousedown");
+#endif
     auto& form_widget = m_editor.form_widget();
     auto result = form_widget.hit_test(event.position(), GUI::Widget::ShouldRespectGreediness::No);
 
@@ -43,7 +49,9 @@ void CursorTool::on_mousedown(GUI::MouseEvent& event)
                 m_editor.selection().toggle(*result.widget);
             } else if (!event.modifiers()) {
                 if (!m_editor.selection().contains(*result.widget)) {
+#ifdef DEBUG_CURSOR_TOOL
                     dbg() << "Selection didn't contain " << *result.widget << ", making it the only selected one";
+#endif
                     m_editor.selection().set(*result.widget);
                 }
 
@@ -68,7 +76,9 @@ void CursorTool::on_mousedown(GUI::MouseEvent& event)
 
 void CursorTool::on_mouseup(GUI::MouseEvent& event)
 {
-    dbg() << "CursorTool::on_mouseup";
+#ifdef DEBUG_CURSOR_TOOL
+    dbgln("CursorTool::on_mouseup");
+#endif
     if (event.button() == GUI::MouseButton::Left) {
         auto& form_widget = m_editor.form_widget();
         auto result = form_widget.hit_test(event.position(), GUI::Widget::ShouldRespectGreediness::No);
@@ -87,7 +97,9 @@ void CursorTool::on_mouseup(GUI::MouseEvent& event)
 
 void CursorTool::on_mousemove(GUI::MouseEvent& event)
 {
-    dbg() << "CursorTool::on_mousemove";
+#ifdef DEBUG_CURSOR_TOOL
+    dbgln("CursorTool::on_mousemove");
+#endif
     auto& form_widget = m_editor.form_widget();
 
     if (m_rubber_banding) {
@@ -124,7 +136,9 @@ void CursorTool::on_mousemove(GUI::MouseEvent& event)
 
 void CursorTool::on_keydown(GUI::KeyEvent& event)
 {
-    dbg() << "CursorTool::on_keydown";
+#ifdef DEBUG_CURSOR_TOOL
+    dbgln("CursorTool::on_keydown");
+#endif
 
     auto move_selected_widgets_by = [this](int x, int y) {
         m_editor.selection().for_each([&](auto& widget) {
@@ -147,11 +161,13 @@ void CursorTool::on_keydown(GUI::KeyEvent& event)
         case Key_Right:
             move_selected_widgets_by(m_editor.form_widget().grid_size(), 0);
             break;
+        default:
+            break;
         }
     }
 }
 
-void CursorTool::set_rubber_band_position(const Gfx::Point& position)
+void CursorTool::set_rubber_band_position(const Gfx::IntPoint& position)
 {
     if (m_rubber_band_position == position)
         return;
@@ -169,11 +185,11 @@ void CursorTool::set_rubber_band_position(const Gfx::Point& position)
     m_editor.form_widget().update();
 }
 
-Gfx::Rect CursorTool::rubber_band_rect() const
+Gfx::IntRect CursorTool::rubber_band_rect() const
 {
     if (!m_rubber_banding)
         return {};
-    return Gfx::Rect::from_two_points(m_rubber_band_origin, m_rubber_band_position);
+    return Gfx::IntRect::from_two_points(m_rubber_band_origin, m_rubber_band_position);
 }
 
 void CursorTool::on_second_paint(GUI::Painter& painter, GUI::PaintEvent&)
@@ -183,4 +199,6 @@ void CursorTool::on_second_paint(GUI::Painter& painter, GUI::PaintEvent&)
     auto rect = rubber_band_rect();
     painter.fill_rect(rect, m_editor.palette().rubber_band_fill());
     painter.draw_rect(rect, m_editor.palette().rubber_band_border());
+}
+
 }

@@ -24,9 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <Kernel/IO.h>
 #include <Kernel/Net/E1000NetworkAdapter.h>
 #include <Kernel/Thread.h>
-#include <LibBareMetal/IO.h>
 
 //#define E1000_DEBUG
 
@@ -36,7 +36,10 @@ namespace Kernel {
 #define REG_STATUS 0x0008
 #define REG_EEPROM 0x0014
 #define REG_CTRL_EXT 0x0018
-#define REG_IMASK 0x00D0
+#define REG_INTERRUPT_CAUSE_READ 0x00C0
+#define REG_INTERRUPT_RATE 0x00C4
+#define REG_INTERRUPT_MASK_SET 0x00D0
+#define REG_INTERRUPT_MASK_CLEAR 0x00D8
 #define REG_RCTRL 0x0100
 #define REG_RXDESCLO 0x2800
 #define REG_RXDESCHI 0x2804
@@ -121,52 +124,75 @@ namespace Kernel {
 #define STATUS_SPEED_1000MB1 0x80
 #define STATUS_SPEED_1000MB2 0xC0
 
-void E1000NetworkAdapter::detect(const PCI::Address& address)
+// Interrupt Masks
+
+#define INTERRUPT_TXDW (1 << 0)
+#define INTERRUPT_TXQE (1 << 1)
+#define INTERRUPT_LSC (1 << 2)
+#define INTERRUPT_RXSEQ (1 << 3)
+#define INTERRUPT_RXDMT0 (1 << 4)
+#define INTERRUPT_RXO (1 << 6)
+#define INTERRUPT_RXT0 (1 << 7)
+#define INTERRUPT_MDAC (1 << 9)
+#define INTERRUPT_RXCFG (1 << 10)
+#define INTERRUPT_PHYINT (1 << 12)
+#define INTERRUPT_TXD_LOW (1 << 15)
+#define INTERRUPT_SRPD (1 << 16)
+
+void E1000NetworkAdapter::detect()
 {
-    if (address.is_null())
-        return;
     static const PCI::ID qemu_bochs_vbox_id = { 0x8086, 0x100e };
-    const PCI::ID id = PCI::get_id(address);
-    if (id != qemu_bochs_vbox_id)
-        return;
-    u8 irq = PCI::get_interrupt_line(address);
-    (void)adopt(*new E1000NetworkAdapter(address, irq)).leak_ref();
+
+    PCI::enumerate([&](const PCI::Address& address, PCI::ID id) {
+        if (address.is_null())
+            return;
+        if (id != qemu_bochs_vbox_id)
+            return;
+        u8 irq = PCI::get_interrupt_line(address);
+        (void)adopt(*new E1000NetworkAdapter(address, irq)).leak_ref();
+    });
 }
 
 E1000NetworkAdapter::E1000NetworkAdapter(PCI::Address address, u8 irq)
     : PCI::Device(address, irq)
+    , m_io_base(PCI::get_BAR1(pci_address()) & ~1)
+    , m_rx_descriptors_region(MM.allocate_contiguous_kernel_region(PAGE_ROUND_UP(sizeof(e1000_rx_desc) * number_of_rx_descriptors + 16), "E1000 RX", Region::Access::Read | Region::Access::Write))
+    , m_tx_descriptors_region(MM.allocate_contiguous_kernel_region(PAGE_ROUND_UP(sizeof(e1000_tx_desc) * number_of_tx_descriptors + 16), "E1000 TX", Region::Access::Read | Region::Access::Write))
 {
     set_interface_name("e1k");
 
-    kprintf("E1000: Found at PCI address @ %w:%b:%b.%b\n", pci_address().seg(), pci_address().bus(), pci_address().slot(), pci_address().function());
+    klog() << "E1000: Found @ " << pci_address();
 
     enable_bus_mastering(pci_address());
 
-    size_t mmio_base_size = PCI::get_BAR_Space_Size(pci_address(), 0);
+    size_t mmio_base_size = PCI::get_BAR_space_size(pci_address(), 0);
     m_mmio_region = MM.allocate_kernel_region(PhysicalAddress(page_base_of(PCI::get_BAR0(pci_address()))), PAGE_ROUND_UP(mmio_base_size), "E1000 MMIO", Region::Access::Read | Region::Access::Write, false, false);
     m_mmio_base = m_mmio_region->vaddr();
     m_use_mmio = true;
-    m_io_base = PCI::get_BAR1(pci_address()) & ~1;
     m_interrupt_line = PCI::get_interrupt_line(pci_address());
-    kprintf("E1000: IO port base: %w\n", m_io_base);
-    kprintf("E1000: MMIO base: P%x\n", PCI::get_BAR0(pci_address()) & 0xfffffffc);
-    kprintf("E1000: MMIO base size: %u bytes\n", mmio_base_size);
-    kprintf("E1000: Interrupt line: %u\n", m_interrupt_line);
+    klog() << "E1000: port base: " << m_io_base;
+    klog() << "E1000: MMIO base: " << PhysicalAddress(PCI::get_BAR0(pci_address()) & 0xfffffffc);
+    klog() << "E1000: MMIO base size: " << mmio_base_size << " bytes";
+    klog() << "E1000: Interrupt line: " << m_interrupt_line;
     detect_eeprom();
-    kprintf("E1000: Has EEPROM? %u\n", m_has_eeprom);
+    klog() << "E1000: Has EEPROM? " << m_has_eeprom;
     read_mac_address();
     const auto& mac = mac_address();
-    kprintf("E1000: MAC address: %b:%b:%b:%b:%b:%b\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    klog() << "E1000: MAC address: " << String::format("%b", mac[0]) << ":" << String::format("%b", mac[1]) << ":" << String::format("%b", mac[2]) << ":" << String::format("%b", mac[3]) << ":" << String::format("%b", mac[4]) << ":" << String::format("%b", mac[5]);
 
     u32 flags = in32(REG_CTRL);
     out32(REG_CTRL, flags | ECTRL_SLU);
 
+    // FIXME: For some reason, this causes an MMIO fault on VirtualBox.
+    //        Removing it allows the system to boot to desktop, but will be hit by an interrupt storm soon after.
+    out16(REG_INTERRUPT_RATE, 6000); // Interrupt rate of 1.536 milliseconds
+
     initialize_rx_descriptors();
     initialize_tx_descriptors();
 
-    out32(REG_IMASK, 0x1f6dc);
-    out32(REG_IMASK, 0xff & ~4);
-    in32(0xc0);
+    out32(REG_INTERRUPT_MASK_SET, 0x1f6dc);
+    out32(REG_INTERRUPT_MASK_SET, INTERRUPT_LSC | INTERRUPT_RXT0);
+    in32(REG_INTERRUPT_CAUSE_READ);
 
     enable_irq();
 }
@@ -175,29 +201,34 @@ E1000NetworkAdapter::~E1000NetworkAdapter()
 {
 }
 
-void E1000NetworkAdapter::handle_irq(RegisterState&)
+void E1000NetworkAdapter::handle_irq(const RegisterState&)
 {
-    out32(REG_IMASK, 0x1);
+    out32(REG_INTERRUPT_MASK_CLEAR, 0xffffffff);
 
-    u32 status = in32(0xc0);
+    u32 status = in32(REG_INTERRUPT_CAUSE_READ);
+
+    m_entropy_source.add_random_event(status);
+
     if (status & 4) {
         u32 flags = in32(REG_CTRL);
         out32(REG_CTRL, flags | ECTRL_SLU);
     }
-    if (status & 0x10) {
-        // Threshold OK?
-    }
     if (status & 0x80) {
         receive();
     }
+    if (status & 0x10) {
+        // Threshold OK?
+    }
 
     m_wait_queue.wake_all();
+
+    out32(REG_INTERRUPT_MASK_SET, INTERRUPT_LSC | INTERRUPT_RXT0 | INTERRUPT_RXO);
 }
 
 void E1000NetworkAdapter::detect_eeprom()
 {
     out32(REG_EEPROM, 0x1);
-    for (volatile int i = 0; i < 999; ++i) {
+    for (int i = 0; i < 999; ++i) {
         u32 data = in32(REG_EEPROM);
         if (data & 0x10) {
             m_has_eeprom = true;
@@ -250,21 +281,17 @@ bool E1000NetworkAdapter::link_up()
 
 void E1000NetworkAdapter::initialize_rx_descriptors()
 {
-    auto ptr = (uintptr_t)kmalloc_eternal(sizeof(e1000_rx_desc) * number_of_rx_descriptors + 16);
-    // Make sure it's 16-byte aligned.
-    if (ptr % 16)
-        ptr = (ptr + 16) - (ptr % 16);
-    m_rx_descriptors = (e1000_rx_desc*)ptr;
-    for (int i = 0; i < number_of_rx_descriptors; ++i) {
-        auto& descriptor = m_rx_descriptors[i];
-        auto addr = (uintptr_t)kmalloc_eternal(8192 + 16);
-        if (addr % 16)
-            addr = (addr + 16) - (addr % 16);
-        descriptor.addr = addr - 0xc0000000;
+    auto* rx_descriptors = (e1000_tx_desc*)m_rx_descriptors_region->vaddr().as_ptr();
+    for (size_t i = 0; i < number_of_rx_descriptors; ++i) {
+        auto& descriptor = rx_descriptors[i];
+        auto region = MM.allocate_contiguous_kernel_region(8192, "E1000 RX buffer", Region::Access::Read | Region::Access::Write);
+        ASSERT(region);
+        m_rx_buffers_regions.append(region.release_nonnull());
+        descriptor.addr = m_rx_buffers_regions[i].physical_page(0)->paddr().get();
         descriptor.status = 0;
     }
 
-    out32(REG_RXDESCLO, (u32)ptr - 0xc0000000);
+    out32(REG_RXDESCLO, m_rx_descriptors_region->physical_page(0)->paddr().get());
     out32(REG_RXDESCHI, 0);
     out32(REG_RXDESCLEN, number_of_rx_descriptors * sizeof(e1000_rx_desc));
     out32(REG_RXDESCHEAD, 0);
@@ -275,21 +302,17 @@ void E1000NetworkAdapter::initialize_rx_descriptors()
 
 void E1000NetworkAdapter::initialize_tx_descriptors()
 {
-    auto ptr = (uintptr_t)kmalloc_eternal(sizeof(e1000_tx_desc) * number_of_tx_descriptors + 16);
-    // Make sure it's 16-byte aligned.
-    if (ptr % 16)
-        ptr = (ptr + 16) - (ptr % 16);
-    m_tx_descriptors = (e1000_tx_desc*)ptr;
-    for (int i = 0; i < number_of_tx_descriptors; ++i) {
-        auto& descriptor = m_tx_descriptors[i];
-        auto addr = (uintptr_t)kmalloc_eternal(8192 + 16);
-        if (addr % 16)
-            addr = (addr + 16) - (addr % 16);
-        descriptor.addr = addr - 0xc0000000;
+    auto* tx_descriptors = (e1000_tx_desc*)m_tx_descriptors_region->vaddr().as_ptr();
+    for (size_t i = 0; i < number_of_tx_descriptors; ++i) {
+        auto& descriptor = tx_descriptors[i];
+        auto region = MM.allocate_contiguous_kernel_region(8192, "E1000 TX buffer", Region::Access::Read | Region::Access::Write);
+        ASSERT(region);
+        m_tx_buffers_regions.append(region.release_nonnull());
+        descriptor.addr = m_tx_buffers_regions[i].physical_page(0)->paddr().get();
         descriptor.cmd = 0;
     }
 
-    out32(REG_TXDESCLO, (u32)ptr - 0xc0000000);
+    out32(REG_TXDESCLO, m_tx_descriptors_region->physical_page(0)->paddr().get());
     out32(REG_TXDESCHI, 0);
     out32(REG_TXDESCLEN, number_of_tx_descriptors * sizeof(e1000_tx_desc));
     out32(REG_TXDESCHEAD, 0);
@@ -302,122 +325,125 @@ void E1000NetworkAdapter::initialize_tx_descriptors()
 void E1000NetworkAdapter::out8(u16 address, u8 data)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: OUT @ 0x%x\n", address);
+    dbg() << "E1000: OUT8 0x" << String::format("%02x", data) << " @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio) {
         auto* ptr = (volatile u8*)(m_mmio_base.get() + address);
         *ptr = data;
         return;
     }
-    IO::out8(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 void E1000NetworkAdapter::out16(u16 address, u16 data)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: OUT @ 0x%x\n", address);
+    dbg() << "E1000: OUT16 0x" << String::format("%04x", data) << " @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio) {
         auto* ptr = (volatile u16*)(m_mmio_base.get() + address);
         *ptr = data;
         return;
     }
-    IO::out16(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 void E1000NetworkAdapter::out32(u16 address, u32 data)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: OUT @ 0x%x\n", address);
+    dbg() << "E1000: OUT32 0x" << String::format("%08x", data) << " @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio) {
         auto* ptr = (volatile u32*)(m_mmio_base.get() + address);
         *ptr = data;
         return;
     }
-    IO::out32(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 u8 E1000NetworkAdapter::in8(u16 address)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: IN @ 0x%x\n", address);
+    dbg() << "E1000: IN8 @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio)
         return *(volatile u8*)(m_mmio_base.get() + address);
-    return IO::in8(m_io_base + address);
+    return m_io_base.offset(address).in<u8>();
 }
 
 u16 E1000NetworkAdapter::in16(u16 address)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: IN @ 0x%x\n", address);
+    dbg() << "E1000: IN16 @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio)
         return *(volatile u16*)(m_mmio_base.get() + address);
-    return IO::in16(m_io_base + address);
+    return m_io_base.offset(address).in<u16>();
 }
 
 u32 E1000NetworkAdapter::in32(u16 address)
 {
 #ifdef E1000_DEBUG
-    dbgprintf("E1000: IN @ 0x%x\n", address);
+    dbg() << "E1000: IN32 @ 0x" << String::format("%04x", address);
 #endif
     if (m_use_mmio)
         return *(volatile u32*)(m_mmio_base.get() + address);
-    return IO::in32(m_io_base + address);
+    return m_io_base.offset(address).in<u32>();
 }
 
-void E1000NetworkAdapter::send_raw(const u8* data, size_t length)
+void E1000NetworkAdapter::send_raw(ReadonlyBytes payload)
 {
     disable_irq();
-    u32 tx_current = in32(REG_TXDESCTAIL);
+    size_t tx_current = in32(REG_TXDESCTAIL) % number_of_tx_descriptors;
 #ifdef E1000_DEBUG
-    kprintf("E1000: Sending packet (%zu bytes)\n", length);
+    klog() << "E1000: Sending packet (" << payload.size() << " bytes)";
 #endif
-    auto& descriptor = m_tx_descriptors[tx_current];
-    ASSERT(length <= 8192);
-    auto* vptr = (void*)(descriptor.addr + 0xc0000000);
-    memcpy(vptr, data, length);
-    descriptor.length = length;
+    auto* tx_descriptors = (e1000_tx_desc*)m_tx_descriptors_region->vaddr().as_ptr();
+    auto& descriptor = tx_descriptors[tx_current];
+    ASSERT(payload.size() <= 8192);
+    auto* vptr = (void*)m_tx_buffers_regions[tx_current].vaddr().as_ptr();
+    memcpy(vptr, payload.data(), payload.size());
+    descriptor.length = payload.size();
     descriptor.status = 0;
     descriptor.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
 #ifdef E1000_DEBUG
-    kprintf("E1000: Using tx descriptor %d (head is at %d)\n", tx_current, in32(REG_TXDESCHEAD));
+    klog() << "E1000: Using tx descriptor " << tx_current << " (head is at " << in32(REG_TXDESCHEAD) << ")";
 #endif
     tx_current = (tx_current + 1) % number_of_tx_descriptors;
-    out32(REG_TXDESCTAIL, tx_current);
     cli();
     enable_irq();
+    out32(REG_TXDESCTAIL, tx_current);
     for (;;) {
         if (descriptor.status) {
             sti();
             break;
         }
-        Thread::current->wait_on(m_wait_queue);
+        Thread::current()->wait_on(m_wait_queue, "E1000NetworkAdapter");
     }
 #ifdef E1000_DEBUG
-    kprintf("E1000: Sent packet, status is now %b!\n", descriptor.status);
+    klog() << "E1000: Sent packet, status is now " << String::format("%b", descriptor.status) << "!";
 #endif
 }
 
 void E1000NetworkAdapter::receive()
 {
+    auto* rx_descriptors = (e1000_tx_desc*)m_rx_descriptors_region->vaddr().as_ptr();
     u32 rx_current;
     for (;;) {
-        rx_current = in32(REG_RXDESCTAIL);
-        if (rx_current == in32(REG_RXDESCHEAD))
+        rx_current = in32(REG_RXDESCTAIL) % number_of_rx_descriptors;
+        if (rx_current == (in32(REG_RXDESCHEAD) % number_of_rx_descriptors))
             return;
         rx_current = (rx_current + 1) % number_of_rx_descriptors;
-        if (!(m_rx_descriptors[rx_current].status & 1))
+        if (!(rx_descriptors[rx_current].status & 1))
             break;
-        auto* buffer = (u8*)(m_rx_descriptors[rx_current].addr + 0xc0000000);
-        u16 length = m_rx_descriptors[rx_current].length;
+        auto* buffer = m_rx_buffers_regions[rx_current].vaddr().as_ptr();
+        u16 length = rx_descriptors[rx_current].length;
+        ASSERT(length <= 8192);
 #ifdef E1000_DEBUG
-        kprintf("E1000: Received 1 packet @ %p (%zu) bytes!\n", buffer, length);
+        klog() << "E1000: Received 1 packet @ " << buffer << " (" << length << ") bytes!";
 #endif
-        did_receive(buffer, length);
-        m_rx_descriptors[rx_current].status = 0;
+        did_receive({ buffer, length });
+        rx_descriptors[rx_current].status = 0;
         out32(REG_RXDESCTAIL, rx_current);
     }
 }

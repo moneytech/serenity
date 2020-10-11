@@ -27,24 +27,31 @@
 #pragma once
 
 #ifdef __serenity__
-#    if defined(KERNEL) || defined(BOOTSTRAPPER)
-#        include <LibBareMetal/Output/kstdio.h>
+#    ifdef KERNEL
+#        include <Kernel/kstdio.h>
 #    else
 #        include <AK/Types.h>
+#        include <stdarg.h>
 extern "C" {
+int vdbgprintf(const char* fmt, va_list);
 int dbgprintf(const char* fmt, ...);
-int dbgputstr(const char*, int);
+int dbgputstr(const char*, ssize_t);
 int sprintf(char* buf, const char* fmt, ...);
-}
-template<size_t N>
-inline int dbgputstr(const char (&array)[N])
-{
-    return ::dbgputstr(array, N);
+int snprintf(char* buffer, size_t, const char* fmt, ...);
 }
 #    endif
 #else
 #    include <stdio.h>
 #    define kprintf printf
-#    define dbgprintf printf
-#    define dbgputstr(characters, length) fwrite(characters, 1, length, stdout)
+#    define dbgprintf(...) fprintf(stderr, __VA_ARGS__)
+inline int dbgputstr(const char* characters, ssize_t length)
+{
+    fwrite(characters, 1, length, stderr);
+    return 0;
+}
 #endif
+template<size_t N>
+inline int dbgputstr(const char (&array)[N])
+{
+    return ::dbgputstr(array, N);
+}

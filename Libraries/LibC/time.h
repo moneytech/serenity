@@ -43,7 +43,7 @@ struct tm {
     int tm_isdst; /* Daylight saving time */
 };
 
-extern long timezone;
+extern long timezone; /* The difference in seconds between UTC and local time */
 extern long altzone;
 extern char* tzname[2];
 extern int daylight;
@@ -54,6 +54,7 @@ typedef int64_t time_t;
 struct tm* localtime(const time_t*);
 struct tm* gmtime(const time_t*);
 time_t mktime(struct tm*);
+time_t timegm(struct tm*);
 time_t time(time_t*);
 char* ctime(const time_t*);
 void tzset();
@@ -69,12 +70,15 @@ struct timespec {
 
 typedef int clockid_t;
 
+#define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 #define TIMER_ABSTIME 99
 
 int clock_gettime(clockid_t, struct timespec*);
+int clock_settime(clockid_t, struct timespec*);
 int clock_nanosleep(clockid_t, int flags, const struct timespec* requested_sleep, struct timespec* remaining_sleep);
 int clock_getres(clockid_t, struct timespec* result);
+int nanosleep(const struct timespec* requested_sleep, struct timespec* remaining_sleep);
 struct tm* gmtime_r(const time_t* timep, struct tm* result);
 struct tm* localtime_r(const time_t* timep, struct tm* result);
 

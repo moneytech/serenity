@@ -33,7 +33,7 @@ TEST_CASE(construct_empty)
     EXPECT(StringView().is_null());
     EXPECT(StringView().is_empty());
     EXPECT(!StringView().characters_without_null_termination());
-    EXPECT_EQ(StringView().length(), size_t { 0 });
+    EXPECT_EQ(StringView().length(), 0u);
 }
 
 TEST_CASE(view_literal)
@@ -68,6 +68,8 @@ TEST_CASE(starts_with)
     EXPECT(test_string_view.starts_with("AB"));
     EXPECT(test_string_view.starts_with("ABCDEF"));
     EXPECT(!test_string_view.starts_with("DEF"));
+    EXPECT(test_string_view.starts_with("abc", CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string_view.starts_with("abc", CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(ends_with)
@@ -80,6 +82,8 @@ TEST_CASE(ends_with)
     EXPECT(test_string_view.ends_with("ABCDEF"));
     EXPECT(!test_string_view.ends_with("ABCDE"));
     EXPECT(!test_string_view.ends_with("ABCDEFG"));
+    EXPECT(test_string_view.ends_with("def", CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string_view.ends_with("def", CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(lines)
@@ -87,7 +91,7 @@ TEST_CASE(lines)
     String test_string = "a\nb\r\nc\rd";
     StringView test_string_view = test_string.view();
     Vector<StringView> test_string_vector = test_string_view.lines();
-    EXPECT_EQ(test_string_vector.size(), 4);
+    EXPECT_EQ(test_string_vector.size(), 4u);
     EXPECT(test_string_vector.at(0) == String("a"));
     EXPECT(test_string_vector.at(1) == String("b"));
     EXPECT(test_string_vector.at(2) == String("c"));
@@ -96,7 +100,7 @@ TEST_CASE(lines)
     test_string = "```\nHello there\r\nHello there\n```";
     test_string_view = test_string.view();
     test_string_vector = test_string_view.lines();
-    EXPECT_EQ(test_string_vector.size(), 4);
+    EXPECT_EQ(test_string_vector.size(), 4u);
     EXPECT(test_string_vector.at(0) == String("```"));
     EXPECT(test_string_vector.at(1) == String("Hello there"));
     EXPECT(test_string_vector.at(2) == String("Hello there"));
@@ -105,10 +109,71 @@ TEST_CASE(lines)
     test_string = "\n\n\n";
     test_string_view = test_string.view();
     test_string_vector = test_string_view.lines();
-    EXPECT_EQ(test_string_vector.size(), 3);
+    EXPECT_EQ(test_string_vector.size(), 3u);
     EXPECT_EQ(test_string_vector.at(0).is_empty(), true);
     EXPECT_EQ(test_string_vector.at(1).is_empty(), true);
     EXPECT_EQ(test_string_vector.at(2).is_empty(), true);
+}
+
+TEST_CASE(find_first_of)
+{
+    String test_string = "aabbcc_xy_ccbbaa";
+    StringView test_string_view = test_string.view();
+
+    EXPECT_EQ(test_string_view.find_first_of('b').has_value(), true);
+    EXPECT_EQ(test_string_view.find_first_of('b').value(), 2U);
+
+    EXPECT_EQ(test_string_view.find_first_of('_').has_value(), true);
+    EXPECT_EQ(test_string_view.find_first_of('_').value(), 6U);
+
+    EXPECT_EQ(test_string_view.find_first_of("bc").has_value(), true);
+    EXPECT_EQ(test_string_view.find_first_of("bc").value(), 2U);
+
+    EXPECT_EQ(test_string_view.find_first_of("yx").has_value(), true);
+    EXPECT_EQ(test_string_view.find_first_of("yx").value(), 7U);
+
+    EXPECT_EQ(test_string_view.find_first_of('n').has_value(), false);
+    EXPECT_EQ(test_string_view.find_first_of("defg").has_value(), false);
+}
+
+TEST_CASE(find_last_of)
+{
+    String test_string = "aabbcc_xy_ccbbaa";
+    StringView test_string_view = test_string.view();
+
+    EXPECT_EQ(test_string_view.find_last_of('b').has_value(), true);
+    EXPECT_EQ(test_string_view.find_last_of('b').value(), 13U);
+
+    EXPECT_EQ(test_string_view.find_last_of('_').has_value(), true);
+    EXPECT_EQ(test_string_view.find_last_of('_').value(), 9U);
+
+    EXPECT_EQ(test_string_view.find_last_of("bc").has_value(), true);
+    EXPECT_EQ(test_string_view.find_last_of("bc").value(), 13U);
+
+    EXPECT_EQ(test_string_view.find_last_of("yx").has_value(), true);
+    EXPECT_EQ(test_string_view.find_last_of("yx").value(), 8U);
+
+    EXPECT_EQ(test_string_view.find_last_of('3').has_value(), false);
+    EXPECT_EQ(test_string_view.find_last_of("fghi").has_value(), false);
+}
+
+TEST_CASE(split_view)
+{
+    StringView test_string_view = "axxbxcxd";
+    EXPECT_EQ(test_string_view.split_view('x'), Vector<StringView>({ "a", "b", "c", "d" }));
+    EXPECT_EQ(test_string_view.split_view('x', true), Vector<StringView>({ "a", "", "b", "c", "d" }));
+    EXPECT_EQ(test_string_view.split_view("x"), Vector<StringView>({ "a", "b", "c", "d" }));
+    EXPECT_EQ(test_string_view.split_view("x", true), Vector<StringView>({ "a", "", "b", "c", "d" }));
+
+    test_string_view = "axxbx";
+    EXPECT_EQ(test_string_view.split_view('x'), Vector<StringView>({ "a", "b" }));
+    EXPECT_EQ(test_string_view.split_view('x', true), Vector<StringView>({ "a", "", "b", "" }));
+    EXPECT_EQ(test_string_view.split_view("x"), Vector<StringView>({ "a", "b" }));
+    EXPECT_EQ(test_string_view.split_view("x", true), Vector<StringView>({ "a", "", "b", "" }));
+
+    test_string_view = "axxbcxxdxx";
+    EXPECT_EQ(test_string_view.split_view("xx"), Vector<StringView>({ "a", "bc", "d" }));
+    EXPECT_EQ(test_string_view.split_view("xx", true), Vector<StringView>({ "a", "bc", "d", "" }));
 }
 
 TEST_MAIN(StringView)

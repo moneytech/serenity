@@ -34,16 +34,19 @@
 // More information about the ATA spec for PATA can be found here:
 //      ftp://ftp.seagate.com/acrobat/reference/111-1c.pdf
 //
+
 #pragma once
 
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
+#include <Kernel/IO.h>
 #include <Kernel/Lock.h>
 #include <Kernel/PCI/Access.h>
 #include <Kernel/PCI/Device.h>
+#include <Kernel/PhysicalAddress.h>
+#include <Kernel/Random.h>
 #include <Kernel/VM/PhysicalPage.h>
 #include <Kernel/WaitQueue.h>
-#include <LibBareMetal/Memory/PhysicalAddress.h>
 
 namespace Kernel {
 
@@ -71,23 +74,27 @@ public:
     RefPtr<PATADiskDevice> master_device() { return m_master; };
     RefPtr<PATADiskDevice> slave_device() { return m_slave; };
 
+    virtual const char* purpose() const override { return "PATA Channel"; }
+
 private:
     //^ IRQHandler
-    virtual void handle_irq(RegisterState&) override;
+    virtual void handle_irq(const RegisterState&) override;
 
     void initialize(bool force_pio);
     void detect_disks();
 
     void wait_for_irq();
-    bool ata_read_sectors_with_dma(u32, u16, u8*, bool);
-    bool ata_write_sectors_with_dma(u32, u16, const u8*, bool);
-    bool ata_read_sectors(u32, u16, u8*, bool);
-    bool ata_write_sectors(u32, u16, const u8*, bool);
+    bool ata_read_sectors_with_dma(u32, u16, UserOrKernelBuffer&, bool);
+    bool ata_write_sectors_with_dma(u32, u16, const UserOrKernelBuffer&, bool);
+    bool ata_read_sectors(u32, u16, UserOrKernelBuffer&, bool);
+    bool ata_write_sectors(u32, u16, const UserOrKernelBuffer&, bool);
+
+    inline void prepare_for_irq();
 
     // Data members
     u8 m_channel_number { 0 }; // Channel number. 0 = master, 1 = slave
-    u16 m_io_base { 0x1F0 };
-    u16 m_control_base { 0 };
+    IOAddress m_io_base;
+    IOAddress m_control_base;
     volatile u8 m_device_error { 0 };
 
     WaitQueue m_irq_queue;
@@ -95,8 +102,9 @@ private:
     PhysicalRegionDescriptor& prdt() { return *reinterpret_cast<PhysicalRegionDescriptor*>(m_prdt_page->paddr().offset(0xc0000000).as_ptr()); }
     RefPtr<PhysicalPage> m_prdt_page;
     RefPtr<PhysicalPage> m_dma_buffer_page;
-    u16 m_bus_master_base { 0 };
+    IOAddress m_bus_master_base;
     Lockable<bool> m_dma_enabled;
+    EntropySource m_entropy_source;
 
     RefPtr<PATADiskDevice> m_master;
     RefPtr<PATADiskDevice> m_slave;

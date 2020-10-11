@@ -74,6 +74,7 @@ int main(int argc, char** argv)
 
     auto file_contents = file->read_all();
     auto json = JsonValue::from_string(file_contents);
+    ASSERT(json.has_value());
 
     if (use_color) {
         color_name = "\033[33;1m";
@@ -86,13 +87,13 @@ int main(int argc, char** argv)
     }
 
     Vector<String> trail;
-    print("json", json, trail);
+    print("json", json.value(), trail);
     return 0;
 }
 
 static void print(const String& name, const JsonValue& value, Vector<String>& trail)
 {
-    for (int i = 0; i < trail.size(); ++i)
+    for (size_t i = 0; i < trail.size(); ++i)
         printf("%s", trail[i].characters());
 
     printf("%s%s%s = ", color_name, name.characters(), color_off);
@@ -116,7 +117,6 @@ static void print(const String& name, const JsonValue& value, Vector<String>& tr
     }
     switch (value.type()) {
     case JsonValue::Type::Null:
-    case JsonValue::Type::Undefined:
         printf("%s", color_null);
         break;
     case JsonValue::Type::Bool:

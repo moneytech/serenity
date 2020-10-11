@@ -24,11 +24,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/String.h>
 #include <AK/QuickSort.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main(int argc, char** argv)
 {
@@ -50,7 +51,7 @@ int main(int argc, char** argv)
         lines.append(buffer);
     }
 
-    quick_sort(lines.begin(), lines.end(), [](auto& a, auto& b) {
+    quick_sort(lines, [](auto& a, auto& b) {
         return strcmp(a.characters(), b.characters()) < 0;
     });
 

@@ -27,12 +27,15 @@
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
+#include <AK/Optional.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
-int parse_options(const StringView& options)
+static int parse_options(const StringView& options)
 {
     int flags = 0;
     Vector<StringView> parts = options.split_view(',');
@@ -47,13 +50,38 @@ int parse_options(const StringView& options)
             flags |= MS_NOSUID;
         else if (part == "bind")
             flags |= MS_BIND;
+        else if (part == "ro")
+            flags |= MS_RDONLY;
+        else if (part == "remount")
+            flags |= MS_REMOUNT;
         else
-            fprintf(stderr, "Ignoring invalid option: %s\n", String(part).characters());
+            fprintf(stderr, "Ignoring invalid option: %s\n", part.to_string().characters());
     }
     return flags;
 }
 
-bool mount_all()
+static bool is_source_none(const char* source)
+{
+    return !strcmp("none", source);
+}
+
+static int get_source_fd(const char* source)
+{
+    if (is_source_none(source))
+        return -1;
+    int fd = open(source, O_RDWR);
+    if (fd < 0)
+        fd = open(source, O_RDONLY);
+    if (fd < 0) {
+        int saved_errno = errno;
+        auto message = String::format("Failed to open: %s\n", source);
+        errno = saved_errno;
+        perror(message.characters());
+    }
+    return fd;
+}
+
+static bool mount_all()
 {
     // Mount all filesystems listed in /etc/fstab.
     dbg() << "Mounting all filesystems...";
@@ -85,7 +113,6 @@ bool mount_all()
             continue;
         }
 
-        const char* devname = parts[0].characters();
         const char* mountpoint = parts[1].characters();
         const char* fstype = parts[2].characters();
         int flags = parts.size() >= 4 ? parse_options(parts[3]) : 0;
@@ -95,11 +122,15 @@ bool mount_all()
             continue;
         }
 
-        dbg() << "Mounting " << devname << "(" << fstype << ")"
+        const char* filename = parts[0].characters();
+
+        int fd = get_source_fd(filename);
+
+        dbg() << "Mounting " << filename << "(" << fstype << ")"
               << " on " << mountpoint;
-        int rc = mount(devname, mountpoint, fstype, flags);
+        int rc = mount(fd, mountpoint, fstype, flags);
         if (rc != 0) {
-            fprintf(stderr, "Failed to mount %s (%s) on %s: %s\n", devname, fstype, mountpoint, strerror(errno));
+            fprintf(stderr, "Failed to mount %s (FD: %d) (%s) on %s: %s\n", filename, fd, fstype, mountpoint, strerror(errno));
             all_ok = false;
             continue;
         }
@@ -108,7 +139,7 @@ bool mount_all()
     return all_ok;
 }
 
-bool print_mounts()
+static bool print_mounts()
 {
     // Output info about currently mounted filesystems.
     auto df = Core::File::construct("/proc/df");
@@ -118,19 +149,20 @@ bool print_mounts()
     }
 
     auto content = df->read_all();
-    auto json = JsonValue::from_string(content).as_array();
+    auto json = JsonValue::from_string(content);
+    ASSERT(json.has_value());
 
-    json.for_each([](auto& value) {
+    json.value().as_array().for_each([](auto& value) {
         auto fs_object = value.as_object();
         auto class_name = fs_object.get("class_name").to_string();
         auto mount_point = fs_object.get("mount_point").to_string();
-        auto device = fs_object.get("device").as_string_or(class_name);
+        auto source = fs_object.get("source").as_string_or("none");
         auto readonly = fs_object.get("readonly").to_bool();
         auto mount_flags = fs_object.get("mount_flags").to_int();
 
-        printf("%s on %s type %s (", device.characters(), mount_point.characters(), class_name.characters());
+        printf("%s on %s type %s (", source.characters(), mount_point.characters(), class_name.characters());
 
-        if (readonly)
+        if (readonly || mount_flags & MS_RDONLY)
             printf("ro");
         else
             printf("rw");
@@ -178,7 +210,9 @@ int main(int argc, char** argv)
             fs_type = "ext2";
         int flags = options ? parse_options(options) : 0;
 
-        if (mount(source, mountpoint, fs_type, flags) < 0) {
+        int fd = get_source_fd(source);
+
+        if (mount(fd, mountpoint, fs_type, flags) < 0) {
             perror("mount");
             return 1;
         }

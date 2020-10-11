@@ -31,7 +31,7 @@
 #include <LibAudio/WavLoader.h>
 #include <LibCore/Timer.h>
 
-#define PLAYBACK_MANAGER_BUFFER_SIZE 64 * KB
+#define PLAYBACK_MANAGER_BUFFER_SIZE 64 * KiB
 #define PLAYBACK_MANAGER_RATE 44100
 
 class PlaybackManager final {
@@ -62,8 +62,8 @@ private:
     void remove_dead_buffers();
 
     bool m_paused { true };
-    int m_next_ptr { 0 };
-    int m_last_seek { 0 };
+    size_t m_next_ptr { 0 };
+    size_t m_last_seek { 0 };
     float m_total_length { 0 };
     OwnPtr<Audio::WavLoader> m_loader { nullptr };
     NonnullRefPtr<Audio::ClientConnection> m_connection;

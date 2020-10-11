@@ -29,14 +29,16 @@
 #include <AK/OwnPtr.h>
 #include <AK/Vector.h>
 #include <AK/WeakPtr.h>
+#include <LibCore/Object.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/Margins.h>
 
 namespace GUI {
 
-class Layout {
+class Layout : public Core::Object {
+    C_OBJECT_ABSTRACT(Layout);
+
 public:
-    Layout();
     virtual ~Layout();
 
     void add_widget(Widget&);
@@ -58,6 +60,8 @@ public:
     void set_spacing(int);
 
 protected:
+    Layout();
+
     struct Entry {
         enum class Type {
             Invalid = 0,

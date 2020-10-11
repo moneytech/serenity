@@ -69,17 +69,21 @@ public:
     bool has_selection() const;
     bool selection_contains(const VT::Position&) const;
     String selected_text() const;
-    VT::Position buffer_position_at(const Gfx::Point&) const;
+    VT::Position buffer_position_at(const Gfx::IntPoint&) const;
     VT::Position normalized_selection_start() const;
     VT::Position normalized_selection_end() const;
 
     bool is_scrollable() const;
+    int scroll_length() const;
+    void set_scroll_length(int);
 
     GUI::Action& copy_action() { return *m_copy_action; }
     GUI::Action& paste_action() { return *m_paste_action; }
+    GUI::Action& clear_including_history_action() { return *m_clear_including_history_action; }
 
     void copy();
     void paste();
+    void clear_including_history();
 
     virtual bool accepts_focus() const override { return true; }
 
@@ -92,34 +96,38 @@ private:
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
     virtual void keydown_event(GUI::KeyEvent&) override;
+    virtual void keyup_event(GUI::KeyEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
+    virtual void mouseup_event(GUI::MouseEvent&) override;
     virtual void mousemove_event(GUI::MouseEvent&) override;
     virtual void mousewheel_event(GUI::MouseEvent&) override;
     virtual void doubleclick_event(GUI::MouseEvent&) override;
-    virtual void focusin_event(Core::Event&) override;
-    virtual void focusout_event(Core::Event&) override;
+    virtual void focusin_event(GUI::FocusEvent&) override;
+    virtual void focusout_event(GUI::FocusEvent&) override;
     virtual void context_menu_event(GUI::ContextMenuEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
+    virtual void leave_event(Core::Event&) override;
     virtual void did_change_font() override;
 
     // ^TerminalClient
     virtual void beep() override;
     virtual void set_window_title(const StringView&) override;
+    virtual void set_window_progress(int value, int max) override;
     virtual void terminal_did_resize(u16 columns, u16 rows) override;
     virtual void terminal_history_changed() override;
-    virtual void emit_char(u8) override;
+    virtual void emit(const u8*, size_t) override;
 
     void set_logical_focus(bool);
 
-    Gfx::Rect glyph_rect(u16 row, u16 column);
-    Gfx::Rect row_rect(u16 row);
+    Gfx::IntRect glyph_rect(u16 row, u16 column);
+    Gfx::IntRect row_rect(u16 row);
 
     void update_cursor();
     void invalidate_cursor();
 
-    void relayout(const Gfx::Size&);
+    void relayout(const Gfx::IntSize&);
 
-    Gfx::Size compute_base_size() const;
+    Gfx::IntSize compute_base_size() const;
     int first_selection_column_on_row(int row) const;
     int last_selection_column_on_row(int row) const;
 
@@ -128,8 +136,19 @@ private:
     VT::Position m_selection_start;
     VT::Position m_selection_end;
 
+    String m_hovered_href;
+    String m_hovered_href_id;
+
+    String m_active_href;
+    String m_active_href_id;
+
+    // Snapshot of m_hovered_href when opening a context menu for a hyperlink.
+    String m_context_menu_href;
+
     bool m_should_beep { false };
     bool m_belling { false };
+    bool m_alt_key_held { false };
+    bool m_rectangle_selection { false };
 
     int m_pixel_width { 0 };
     int m_pixel_height { 0 };
@@ -161,8 +180,12 @@ private:
 
     RefPtr<GUI::Action> m_copy_action;
     RefPtr<GUI::Action> m_paste_action;
+    RefPtr<GUI::Action> m_clear_including_history_action;
 
     RefPtr<GUI::Menu> m_context_menu;
+    RefPtr<GUI::Menu> m_context_menu_for_hyperlink;
 
     Core::ElapsedTimer m_triple_click_timer;
+
+    Gfx::IntPoint m_left_mousedown_position;
 };

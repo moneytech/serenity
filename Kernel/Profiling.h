@@ -36,16 +36,16 @@ class Process;
 
 namespace Profiling {
 
-constexpr size_t max_stack_frame_count = 30;
+constexpr size_t max_stack_frame_count = 50;
 
 struct Sample {
-    i32 pid;
-    i32 tid;
+    ProcessID pid;
+    ThreadID tid;
     u64 timestamp;
     u32 frames[max_stack_frame_count];
 };
 
-extern u32 pid();
+extern ProcessID pid();
 extern String& executable_path();
 
 Sample& next_sample_slot();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,10 +28,18 @@
 #include <Kernel/PCI/IOAccess.h>
 
 namespace Kernel {
+namespace PCI {
 
-static PCI::Access* s_access;
+static Access* s_access;
 
-PCI::Access& PCI::Access::the()
+inline void write8(Address address, u32 field, u8 value) { Access::the().write8_field(address, field, value); }
+inline void write16(Address address, u32 field, u16 value) { Access::the().write16_field(address, field, value); }
+inline void write32(Address address, u32 field, u32 value) { Access::the().write32_field(address, field, value); }
+inline u8 read8(Address address, u32 field) { return Access::the().read8_field(address, field); }
+inline u16 read16(Address address, u32 field) { return Access::the().read16_field(address, field); }
+inline u32 read32(Address address, u32 field) { return Access::the().read32_field(address, field); }
+
+Access& Access::the()
 {
     if (s_access == nullptr) {
         ASSERT_NOT_REACHED(); // We failed to initialize the PCI subsystem, so stop here!
@@ -39,17 +47,22 @@ PCI::Access& PCI::Access::the()
     return *s_access;
 }
 
-bool PCI::Access::is_initialized()
+bool Access::is_initialized()
 {
     return (s_access != nullptr);
 }
 
-PCI::Access::Access()
+Access::Access()
 {
     s_access = this;
 }
 
-void PCI::Access::enumerate_functions(int type, u8 bus, u8 slot, u8 function, Function<void(Address, ID)>& callback)
+static u16 read_type(Address address)
+{
+    return (read8(address, PCI_CLASS) << 8u) | read8(address, PCI_SUBCLASS);
+}
+
+void Access::enumerate_functions(int type, u8 bus, u8 slot, u8 function, Function<void(Address, ID)>& callback)
 {
     Address address(0, bus, slot, function);
     if (type == -1 || type == read_type(address))
@@ -57,14 +70,14 @@ void PCI::Access::enumerate_functions(int type, u8 bus, u8 slot, u8 function, Fu
     if (read_type(address) == PCI_TYPE_BRIDGE) {
         u8 secondary_bus = read8_field(address, PCI_SECONDARY_BUS);
 #ifdef PCI_DEBUG
-        kprintf("PCI: Found secondary bus: %u\n", secondary_bus);
+        klog() << "PCI: Found secondary bus: " << secondary_bus;
 #endif
         ASSERT(secondary_bus != bus);
         enumerate_bus(type, secondary_bus, callback);
     }
 }
 
-void PCI::Access::enumerate_slot(int type, u8 bus, u8 slot, Function<void(Address, ID)>& callback)
+void Access::enumerate_slot(int type, u8 bus, u8 slot, Function<void(Address, ID)>& callback)
 {
     Address address(0, bus, slot, 0);
     if (read16_field(address, PCI_VENDOR_ID) == PCI_NONE)
@@ -79,113 +92,151 @@ void PCI::Access::enumerate_slot(int type, u8 bus, u8 slot, Function<void(Addres
     }
 }
 
-PCI::ID PCI::Access::get_id(Address address)
-{
-    return { read16_field(address, PCI_VENDOR_ID), read16_field(address, PCI_DEVICE_ID) };
-}
-
-void PCI::Access::enumerate_bus(int type, u8 bus, Function<void(Address, ID)>& callback)
+void Access::enumerate_bus(int type, u8 bus, Function<void(Address, ID)>& callback)
 {
     for (u8 slot = 0; slot < 32; ++slot)
         enumerate_slot(type, bus, slot, callback);
 }
 
-void PCI::Access::enable_bus_mastering(Address address)
+void Access::enumerate(Function<void(Address, ID)>& callback) const
 {
-    auto value = read16_field(address, PCI_COMMAND);
+    for (auto& physical_id : m_physical_ids) {
+        callback(physical_id.address(), physical_id.id());
+    }
+}
+
+void enumerate(Function<void(Address, ID)> callback)
+{
+    Access::the().enumerate(callback);
+}
+
+void raw_access(Address address, u32 field, size_t access_size, u32 value)
+{
+    ASSERT(access_size != 0);
+    if (access_size == 1) {
+        write8(address, field, value);
+        return;
+    }
+    if (access_size == 2) {
+        write16(address, field, value);
+        return;
+    }
+    if (access_size == 4) {
+        write32(address, field, value);
+        return;
+    }
+    ASSERT_NOT_REACHED();
+}
+
+ID get_id(Address address)
+{
+    return { read16(address, PCI_VENDOR_ID), read16(address, PCI_DEVICE_ID) };
+}
+
+void enable_interrupt_line(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) & ~(1 << 10));
+}
+
+void disable_interrupt_line(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) | 1 << 10);
+}
+
+u8 get_interrupt_line(Address address)
+{
+    return read8(address, PCI_INTERRUPT_LINE);
+}
+
+u32 get_BAR0(Address address)
+{
+    return read32(address, PCI_BAR0);
+}
+
+u32 get_BAR1(Address address)
+{
+    return read32(address, PCI_BAR1);
+}
+
+u32 get_BAR2(Address address)
+{
+    return read32(address, PCI_BAR2);
+}
+
+u32 get_BAR3(Address address)
+{
+    return read16(address, PCI_BAR3);
+}
+
+u32 get_BAR4(Address address)
+{
+    return read32(address, PCI_BAR4);
+}
+
+u32 get_BAR5(Address address)
+{
+    return read32(address, PCI_BAR5);
+}
+
+u8 get_revision_id(Address address)
+{
+    return read8(address, PCI_REVISION_ID);
+}
+
+u8 get_subclass(Address address)
+{
+    return read8(address, PCI_SUBCLASS);
+}
+
+u8 get_class(Address address)
+{
+    return read8(address, PCI_CLASS);
+}
+
+u8 get_programming_interface(Address address)
+{
+    return read8(address, PCI_PROG_IF);
+}
+
+u16 get_subsystem_id(Address address)
+{
+    return read16(address, PCI_SUBSYSTEM_ID);
+}
+
+u16 get_subsystem_vendor_id(Address address)
+{
+    return read16(address, PCI_SUBSYSTEM_VENDOR_ID);
+}
+
+void enable_bus_mastering(Address address)
+{
+    auto value = read16(address, PCI_COMMAND);
     value |= (1 << 2);
     value |= (1 << 0);
-    write16_field(address, PCI_COMMAND, value);
+    write16(address, PCI_COMMAND, value);
 }
 
-void PCI::Access::disable_bus_mastering(Address address)
+void disable_bus_mastering(Address address)
 {
-    auto value = read16_field(address, PCI_COMMAND);
+    auto value = read16(address, PCI_COMMAND);
     value &= ~(1 << 2);
     value |= (1 << 0);
-    write16_field(address, PCI_COMMAND, value);
+    write16(address, PCI_COMMAND, value);
 }
 
-namespace PCI {
-    void enumerate_all(Function<void(Address, ID)> callback)
-    {
-        PCI::Access::the().enumerate_all(callback);
-    }
-
-    ID get_id(Address address)
-    {
-        return PCI::Access::the().get_id(address);
-    }
-
-    void enable_interrupt_line(Address address)
-    {
-        PCI::Access::the().enable_interrupt_line(address);
-    }
-    void disable_interrupt_line(Address address)
-    {
-        PCI::Access::the().disable_interrupt_line(address);
-    }
-
-    u8 get_interrupt_line(Address address)
-    {
-        return PCI::Access::the().get_interrupt_line(address);
-    }
-    u32 get_BAR0(Address address)
-    {
-        return PCI::Access::the().get_BAR0(address);
-    }
-    u32 get_BAR1(Address address)
-    {
-        return PCI::Access::the().get_BAR1(address);
-    }
-    u32 get_BAR2(Address address)
-    {
-        return PCI::Access::the().get_BAR2(address);
-    }
-    u32 get_BAR3(Address address)
-    {
-        return PCI::Access::the().get_BAR3(address);
-    }
-    u32 get_BAR4(Address address)
-    {
-        return PCI::Access::the().get_BAR4(address);
-    }
-    u32 get_BAR5(Address address)
-    {
-        return PCI::Access::the().get_BAR5(address);
-    }
-    u8 get_revision_id(Address address)
-    {
-        return PCI::Access::the().get_revision_id(address);
-    }
-    u8 get_subclass(Address address)
-    {
-        return PCI::Access::the().get_subclass(address);
-    }
-    u8 get_class(Address address)
-    {
-        return PCI::Access::the().get_class(address);
-    }
-    u16 get_subsystem_id(Address address)
-    {
-        return PCI::Access::the().get_subsystem_id(address);
-    }
-    u16 get_subsystem_vendor_id(Address address)
-    {
-        return PCI::Access::the().get_subsystem_vendor_id(address);
-    }
-    void enable_bus_mastering(Address address)
-    {
-        PCI::Access::the().enable_bus_mastering(address);
-    }
-    void disable_bus_mastering(Address address)
-    {
-        PCI::Access::the().disable_bus_mastering(address);
-    }
-    size_t get_BAR_Space_Size(Address address, u8 bar_number)
-    {
-        return PCI::Access::the().get_BAR_Space_Size(address, bar_number);
-    }
+size_t get_BAR_space_size(Address address, u8 bar_number)
+{
+    // See PCI Spec 2.3, Page 222
+    ASSERT(bar_number < 6);
+    u8 field = (PCI_BAR0 + (bar_number << 2));
+    u32 bar_reserved = read32(address, field);
+    write32(address, field, 0xFFFFFFFF);
+    u32 space_size = read32(address, field);
+    write32(address, field, bar_reserved);
+    space_size &= 0xfffffff0;
+    space_size = (~space_size) + 1;
+    return space_size;
 }
 
+}
 }

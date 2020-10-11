@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/BufferStream.h>
+#include <AK/MemoryStream.h>
 #include <Kernel/Devices/BlockDevice.h>
 #include <Kernel/Devices/CharacterDevice.h>
 #include <Kernel/FileSystem/Custody.h>
@@ -70,40 +70,24 @@ FileDescription::~FileDescription()
         socket()->detach(*this);
     if (is_fifo())
         static_cast<FIFO*>(m_file.ptr())->detach(m_fifo_direction);
-    m_file->close();
+    // FIXME: Should this error path be observed somehow?
+    (void)m_file->close();
     m_inode = nullptr;
 }
 
-KResult FileDescription::fstat(stat& buffer)
+KResult FileDescription::stat(::stat& buffer)
 {
-    SmapDisabler disabler;
-    if (is_fifo()) {
-        memset(&buffer, 0, sizeof(buffer));
-        buffer.st_mode = 001000;
-        return KSuccess;
-    }
-    if (is_socket()) {
-        memset(&buffer, 0, sizeof(buffer));
-        buffer.st_mode = 0140000;
-        return KSuccess;
-    }
-
-    if (!m_inode)
-        return KResult(-EBADF);
-    return metadata().stat(buffer);
+    LOCKER(m_lock);
+    // FIXME: This is a little awkward, why can't we always forward to File::stat()?
+    if (m_inode)
+        return metadata().stat(buffer);
+    return m_file->stat(buffer);
 }
 
 off_t FileDescription::seek(off_t offset, int whence)
 {
     LOCKER(m_lock);
     if (!m_file->is_seekable())
-        return -EINVAL;
-
-    auto metadata = this->metadata();
-    if (!metadata.is_valid())
-        return -EIO;
-
-    if (metadata.is_socket() || metadata.is_fifo())
         return -ESPIPE;
 
     off_t new_offset;
@@ -116,7 +100,9 @@ off_t FileDescription::seek(off_t offset, int whence)
         new_offset = m_current_offset + offset;
         break;
     case SEEK_END:
-        new_offset = metadata.size;
+        if (!metadata().is_valid())
+            return -EIO;
+        new_offset = metadata().size;
         break;
     default:
         return -EINVAL;
@@ -130,41 +116,45 @@ off_t FileDescription::seek(off_t offset, int whence)
     return m_current_offset;
 }
 
-ssize_t FileDescription::read(u8* buffer, ssize_t count)
+KResultOr<size_t> FileDescription::read(UserOrKernelBuffer& buffer, size_t count)
 {
     LOCKER(m_lock);
-    if ((m_current_offset + count) < 0)
+    Checked<size_t> new_offset = m_current_offset;
+    new_offset += count;
+    if (new_offset.has_overflow())
         return -EOVERFLOW;
     SmapDisabler disabler;
-    int nread = m_file->read(*this, buffer, count);
-    if (nread > 0 && m_file->is_seekable())
-        m_current_offset += nread;
-    return nread;
+    auto nread_or_error = m_file->read(*this, offset(), buffer, count);
+    if (!nread_or_error.is_error() && m_file->is_seekable())
+        m_current_offset += nread_or_error.value();
+    return nread_or_error;
 }
 
-ssize_t FileDescription::write(const u8* data, ssize_t size)
+KResultOr<size_t> FileDescription::write(const UserOrKernelBuffer& data, size_t size)
 {
     LOCKER(m_lock);
-    if ((m_current_offset + size) < 0)
+    Checked<size_t> new_offset = m_current_offset;
+    new_offset += size;
+    if (new_offset.has_overflow())
         return -EOVERFLOW;
     SmapDisabler disabler;
-    int nwritten = m_file->write(*this, data, size);
-    if (nwritten > 0 && m_file->is_seekable())
-        m_current_offset += nwritten;
-    return nwritten;
+    auto nwritten_or_error = m_file->write(*this, offset(), data, size);
+    if (!nwritten_or_error.is_error() && m_file->is_seekable())
+        m_current_offset += nwritten_or_error.value();
+    return nwritten_or_error;
 }
 
 bool FileDescription::can_write() const
 {
-    return m_file->can_write(*this);
+    return m_file->can_write(*this, offset());
 }
 
 bool FileDescription::can_read() const
 {
-    return m_file->can_read(*this);
+    return m_file->can_read(*this, offset());
 }
 
-ByteBuffer FileDescription::read_entire_file()
+KResultOr<KBuffer> FileDescription::read_entire_file()
 {
     // HACK ALERT: (This entire function)
     ASSERT(m_file->is_inode());
@@ -172,9 +162,9 @@ ByteBuffer FileDescription::read_entire_file()
     return m_inode->read_entire(this);
 }
 
-ssize_t FileDescription::get_dir_entries(u8* buffer, ssize_t size)
+ssize_t FileDescription::get_dir_entries(UserOrKernelBuffer& buffer, ssize_t size)
 {
-    LOCKER(m_lock);
+    LOCKER(m_lock, Lock::Mode::Shared);
     if (!is_directory())
         return -ENOTDIR;
 
@@ -185,24 +175,29 @@ ssize_t FileDescription::get_dir_entries(u8* buffer, ssize_t size)
     if (size < 0)
         return -EINVAL;
 
-    size_t size_to_allocate = max(PAGE_SIZE, metadata.size);
+    size_t size_to_allocate = max(static_cast<size_t>(PAGE_SIZE), static_cast<size_t>(metadata.size));
 
     auto temp_buffer = ByteBuffer::create_uninitialized(size_to_allocate);
-    BufferStream stream(temp_buffer);
-    VFS::the().traverse_directory_inode(*m_inode, [&stream](auto& entry) {
+    OutputMemoryStream stream { temp_buffer };
+
+    KResult result = VFS::the().traverse_directory_inode(*m_inode, [&stream, this](auto& entry) {
         stream << (u32)entry.inode.index();
-        stream << (u8)entry.file_type;
-        stream << (u32)entry.name_length;
-        stream << entry.name;
+        stream << m_inode->fs().internal_file_type_to_directory_entry_type(entry);
+        stream << (u32)entry.name.length();
+        stream << entry.name.bytes();
         return true;
     });
-    stream.snip();
 
-    if (static_cast<size_t>(size) < temp_buffer.size())
+    if (result.is_error())
+        return result;
+
+    if (stream.handle_recoverable_error())
         return -EINVAL;
 
-    copy_to_user(buffer, temp_buffer.data(), temp_buffer.size());
-    return stream.offset();
+    if (!buffer.write(stream.bytes()))
+        return -EFAULT;
+
+    return stream.size();
 }
 
 bool FileDescription::is_device() const
@@ -262,9 +257,11 @@ MasterPTY* FileDescription::master_pty()
     return static_cast<MasterPTY*>(m_file.ptr());
 }
 
-int FileDescription::close()
+KResult FileDescription::close()
 {
-    return 0;
+    if (m_file->ref_count() > 1)
+        return KSuccess;
+    return m_file->close();
 }
 
 String FileDescription::absolute_path() const
@@ -281,10 +278,10 @@ InodeMetadata FileDescription::metadata() const
     return {};
 }
 
-KResultOr<Region*> FileDescription::mmap(Process& process, VirtualAddress vaddr, size_t offset, size_t size, int prot)
+KResultOr<Region*> FileDescription::mmap(Process& process, VirtualAddress vaddr, size_t offset, size_t size, int prot, bool shared)
 {
     LOCKER(m_lock);
-    return m_file->mmap(process, *this, vaddr, offset, size, prot);
+    return m_file->mmap(process, *this, vaddr, offset, size, prot, shared);
 }
 
 KResult FileDescription::truncate(u64 length)
@@ -336,13 +333,13 @@ void FileDescription::set_file_flags(u32 flags)
 KResult FileDescription::chmod(mode_t mode)
 {
     LOCKER(m_lock);
-    return m_file->chmod(mode);
+    return m_file->chmod(*this, mode);
 }
 
 KResult FileDescription::chown(uid_t uid, gid_t gid)
 {
     LOCKER(m_lock);
-    return m_file->chown(uid, gid);
+    return m_file->chown(*this, uid, gid);
 }
 
 }

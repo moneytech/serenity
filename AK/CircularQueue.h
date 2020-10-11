@@ -27,13 +27,15 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/Forward.h>
 #include <AK/StdLibExtras.h>
-#include <AK/Types.h>
 
 namespace AK {
 
 template<typename T, size_t Capacity>
 class CircularQueue {
+    friend CircularDuplexStream<Capacity>;
+
 public:
     CircularQueue()
     {
@@ -64,7 +66,7 @@ public:
         if (m_size == Capacity)
             slot.~T();
 
-        new (&slot) T(value);
+        new (&slot) T(move(value));
         if (m_size == Capacity)
             m_head = (m_head + 1) % Capacity;
         else

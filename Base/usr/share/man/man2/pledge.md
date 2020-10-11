@@ -24,6 +24,10 @@ Note that `pledge()` can be called repeatedly to remove previously-pledged promi
 
 If `promises` or `execpromises` is null, the corresponding value is unchanged.
 
+If the process later attempts to use any system functionality it has previously promised *not* to use, the process is instantly terminated. Note that a process that has not ever called `pledge()` is considered to not have made any promises, and is allowed use any system functionality (subject to regular permission checks).
+
+`pledge()` is intended to be used in programs that want to sandbox themselves, either to limit the impact of a possible vulnerability exploitation, or before intentionally executing untrusted code.
+
 ## Promises
 
 * `stdio`: Basic I/O, memory allocation, information about self, various non-destructive syscalls
@@ -44,6 +48,11 @@ If `promises` or `execpromises` is null, the corresponding value is unchanged.
 * `shared_buffer`: Shared memory buffers (\*)
 * `chroot`: The [`chroot(2)`](chroot.md) syscall (\*)
 * `video`: May use [`ioctl(2)`](ioctl.md) and [`mmap(2)`](mmap.md) on framebuffer video devices
+* `settime`: Changing the system time and date
+* `setkeymap`: Changing the system keyboard layout (\*)
+* `sigaction`: Change signal handlers and dispositions (\*)
+* `sendfd`: Send file descriptors over a local socket
+* `recvfd`: Receive file descriptors over a local socket
 
 Promises marked with an asterisk (\*) are SerenityOS specific extensions not supported by the original OpenBSD `pledge()`.
 
@@ -56,3 +65,7 @@ Promises marked with an asterisk (\*) are SerenityOS specific extensions not sup
 ## History
 
 The `pledge()` system call was first introduced by OpenBSD. The implementation in SerenityOS differs in many ways and is by no means final.
+
+## See also
+
+* [`unveil`(2)](unveil.md)

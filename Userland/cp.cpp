@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
@@ -112,7 +112,7 @@ bool copy_file(String src_path, String dst_path, struct stat src_stat, int src_f
         StringBuilder builder;
         builder.append(dst_path);
         builder.append('/');
-        builder.append(FileSystemPath(src_path).basename());
+        builder.append(LexicalPath(src_path).basename());
         dst_path = builder.to_string();
         dst_fd = creat(dst_path.characters(), 0666);
         if (dst_fd < 0) {
@@ -176,7 +176,7 @@ bool copy_directory(String src_path, String dst_path)
     }
     Core::DirIterator di(src_path, Core::DirIterator::SkipDots);
     if (di.has_error()) {
-        fprintf(stderr, "cp: CDirIterator: %s\n", di.error_string());
+        fprintf(stderr, "cp: DirIterator: %s\n", di.error_string());
         return false;
     }
     while (di.has_next()) {

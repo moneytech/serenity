@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include <LibGfx/StylePainter.h>
 #include <LibGUI/Widget.h>
+#include <LibGfx/StylePainter.h>
 
 namespace GUI {
 
@@ -37,7 +37,7 @@ public:
     virtual ~Frame() override;
 
     int frame_thickness() const { return m_thickness; }
-    void set_frame_thickness(int thickness) { m_thickness = thickness; }
+    void set_frame_thickness(int thickness);
 
     Gfx::FrameShadow frame_shadow() const { return m_shadow; }
     void set_frame_shadow(Gfx::FrameShadow shadow) { m_shadow = shadow; }
@@ -45,8 +45,10 @@ public:
     Gfx::FrameShape frame_shape() const { return m_shape; }
     void set_frame_shape(Gfx::FrameShape shape) { m_shape = shape; }
 
-    Gfx::Rect frame_inner_rect_for_size(const Gfx::Size& size) const { return { m_thickness, m_thickness, size.width() - m_thickness * 2, size.height() - m_thickness * 2 }; }
-    Gfx::Rect frame_inner_rect() const { return frame_inner_rect_for_size(size()); }
+    Gfx::IntRect frame_inner_rect_for_size(const Gfx::IntSize& size) const { return { m_thickness, m_thickness, size.width() - m_thickness * 2, size.height() - m_thickness * 2 }; }
+    Gfx::IntRect frame_inner_rect() const { return frame_inner_rect_for_size(size()); }
+
+    virtual Gfx::IntRect children_clip_rect() const override;
 
 protected:
     Frame();

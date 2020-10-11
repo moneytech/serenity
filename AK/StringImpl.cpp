@@ -24,14 +24,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "StringImpl.h"
-#include "HashTable.h"
-#include "StdLibExtras.h"
-#include "kmalloc.h"
-
-#ifndef __serenity__
-#include <new>
-#endif
+#include <AK/FlyString.h>
+#include <AK/HashTable.h>
+#include <AK/Memory.h>
+#include <AK/StdLibExtras.h>
+#include <AK/StringImpl.h>
+#include <AK/kmalloc.h>
 
 //#define DEBUG_STRINGIMPL
 
@@ -39,11 +37,12 @@
 unsigned g_stringimpl_count;
 static HashTable<StringImpl*>* g_all_live_stringimpls;
 
+void dump_all_stringimpls();
 void dump_all_stringimpls()
 {
     unsigned i = 0;
     for (auto& it : *g_all_live_stringimpls) {
-        dbgprsize_tf("%u: \"%s\"\n", i, (*it).characters());
+        dbgln("{}: \"{}\"", i, *it);
         ++i;
     }
 }
@@ -75,6 +74,8 @@ StringImpl::StringImpl(ConstructWithInlineBufferTag, size_t length)
 
 StringImpl::~StringImpl()
 {
+    if (m_fly)
+        FlyString::did_destroy_impl({}, *this);
 #ifdef DEBUG_STRINGIMPL
     --g_stringimpl_count;
     g_all_live_stringimpls->remove(this);
@@ -131,6 +132,11 @@ RefPtr<StringImpl> StringImpl::create(const char* cstring, ShouldChomp shouldCho
         return nullptr;
 
     return create(cstring, strlen(cstring), shouldChomp);
+}
+
+RefPtr<StringImpl> StringImpl::create(ReadonlyBytes bytes, ShouldChomp shouldChomp)
+{
+    return StringImpl::create(reinterpret_cast<const char*>(bytes.data()), bytes.size(), shouldChomp);
 }
 
 static inline bool is_ascii_lowercase(char c)

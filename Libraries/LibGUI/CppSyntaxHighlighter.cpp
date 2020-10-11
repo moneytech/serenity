@@ -1,42 +1,84 @@
-#include <LibGUI/CppLexer.h>
+/*
+ * Copyright (c) 2020, the SerenityOS developers.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include <LibCpp/Lexer.h>
 #include <LibGUI/CppSyntaxHighlighter.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGfx/Font.h>
+#include <LibGfx/Palette.h>
 
 namespace GUI {
 
-struct TextStyle {
-    Color color;
-    const Gfx::Font* font { nullptr };
-};
-
-static TextStyle style_for_token_type(CppToken::Type type)
+static TextStyle style_for_token_type(Gfx::Palette palette, Cpp::Token::Type type)
 {
     switch (type) {
-    case CppToken::Type::Keyword:
-        return { Color::Black, &Gfx::Font::default_bold_fixed_width_font() };
-    case CppToken::Type::KnownType:
-        return { Color::from_rgb(0x800080), &Gfx::Font::default_bold_fixed_width_font() };
-    case CppToken::Type::Identifier:
-        return { Color::from_rgb(0x092e64) };
-    case CppToken::Type::DoubleQuotedString:
-    case CppToken::Type::SingleQuotedString:
-    case CppToken::Type::Number:
-        return { Color::from_rgb(0x800000) };
-    case CppToken::Type::PreprocessorStatement:
-        return { Color::from_rgb(0x008080) };
-    case CppToken::Type::Comment:
-        return { Color::from_rgb(0x008000) };
+    case Cpp::Token::Type::Keyword:
+        return { palette.syntax_keyword(), &Gfx::Font::default_bold_fixed_width_font() };
+    case Cpp::Token::Type::KnownType:
+        return { palette.syntax_type(), &Gfx::Font::default_bold_fixed_width_font() };
+    case Cpp::Token::Type::Identifier:
+        return { palette.syntax_identifier() };
+    case Cpp::Token::Type::DoubleQuotedString:
+    case Cpp::Token::Type::SingleQuotedString:
+    case Cpp::Token::Type::RawString:
+        return { palette.syntax_string() };
+    case Cpp::Token::Type::Integer:
+    case Cpp::Token::Type::Float:
+        return { palette.syntax_number() };
+    case Cpp::Token::Type::IncludePath:
+        return { palette.syntax_preprocessor_value() };
+    case Cpp::Token::Type::EscapeSequence:
+        return { palette.syntax_keyword(), &Gfx::Font::default_bold_fixed_width_font() };
+    case Cpp::Token::Type::PreprocessorStatement:
+    case Cpp::Token::Type::IncludeStatement:
+        return { palette.syntax_preprocessor_statement() };
+    case Cpp::Token::Type::Comment:
+        return { palette.syntax_comment() };
     default:
-        return { Color::Black };
+        return { palette.base_text() };
     }
 }
 
-void CppSyntaxHighlighter::rehighlight()
+bool CppSyntaxHighlighter::is_identifier(void* token) const
+{
+    auto cpp_token = static_cast<Cpp::Token::Type>(reinterpret_cast<size_t>(token));
+    return cpp_token == Cpp::Token::Type::Identifier;
+}
+
+bool CppSyntaxHighlighter::is_navigatable(void* token) const
+{
+    auto cpp_token = static_cast<Cpp::Token::Type>(reinterpret_cast<size_t>(token));
+    return cpp_token == Cpp::Token::Type::IncludePath;
+}
+
+void CppSyntaxHighlighter::rehighlight(Gfx::Palette palette)
 {
     ASSERT(m_editor);
     auto text = m_editor->text();
-    CppLexer lexer(text);
+    Cpp::Lexer lexer(text);
     auto tokens = lexer.lex();
 
     Vector<GUI::TextDocumentSpan> spans;
@@ -47,11 +89,11 @@ void CppSyntaxHighlighter::rehighlight()
         GUI::TextDocumentSpan span;
         span.range.set_start({ token.m_start.line, token.m_start.column });
         span.range.set_end({ token.m_end.line, token.m_end.column });
-        auto style = style_for_token_type(token.m_type);
+        auto style = style_for_token_type(palette, token.m_type);
         span.color = style.color;
         span.font = style.font;
-        span.is_skippable = token.m_type == CppToken::Type::Whitespace;
-        span.data = (void*)token.m_type;
+        span.is_skippable = token.m_type == Cpp::Token::Type::Whitespace;
+        span.data = reinterpret_cast<void*>(token.m_type);
         spans.append(span);
     }
     m_editor->document().set_spans(spans);
@@ -62,83 +104,20 @@ void CppSyntaxHighlighter::rehighlight()
     m_editor->update();
 }
 
-void CppSyntaxHighlighter::highlight_matching_token_pair()
+Vector<SyntaxHighlighter::MatchingTokenPair> CppSyntaxHighlighter::matching_token_pairs() const
 {
-    ASSERT(m_editor);
-    auto& document = m_editor->document();
-
-    enum class Direction {
-        Forward,
-        Backward,
-    };
-
-    auto find_span_of_type = [&](int i, CppToken::Type type, CppToken::Type not_type, Direction direction) {
-        int nesting_level = 0;
-        bool forward = direction == Direction::Forward;
-        for (forward ? ++i : --i; forward ? (i < document.spans().size()) : (i >= 0); forward ? ++i : --i) {
-            auto& span = document.spans().at(i);
-            auto span_token_type = (CppToken::Type)((uintptr_t)span.data);
-            if (span_token_type == not_type) {
-                ++nesting_level;
-            } else if (span_token_type == type) {
-                if (nesting_level-- <= 0)
-                    return i;
-            }
-        }
-        return -1;
-    };
-
-    auto make_buddies = [&](int index0, int index1) {
-        auto& buddy0 = const_cast<GUI::TextDocumentSpan&>(document.spans()[index0]);
-        auto& buddy1 = const_cast<GUI::TextDocumentSpan&>(document.spans()[index1]);
-        m_has_brace_buddies = true;
-        m_brace_buddies[0].index = index0;
-        m_brace_buddies[1].index = index1;
-        m_brace_buddies[0].span_backup = buddy0;
-        m_brace_buddies[1].span_backup = buddy1;
-        buddy0.background_color = Color::DarkCyan;
-        buddy1.background_color = Color::DarkCyan;
-        buddy0.color = Color::White;
-        buddy1.color = Color::White;
-        m_editor->update();
-    };
-
-    struct MatchingTokenPair {
-        CppToken::Type open;
-        CppToken::Type close;
-    };
-
-    MatchingTokenPair pairs[] = {
-        { CppToken::Type::LeftCurly, CppToken::Type::RightCurly },
-        { CppToken::Type::LeftParen, CppToken::Type::RightParen },
-        { CppToken::Type::LeftBracket, CppToken::Type::RightBracket },
-    };
-
-    for (int i = 0; i < document.spans().size(); ++i) {
-        auto& span = const_cast<GUI::TextDocumentSpan&>(document.spans().at(i));
-        auto token_type = (CppToken::Type)((uintptr_t)span.data);
-
-        for (auto& pair : pairs) {
-            if (token_type == pair.open && span.range.start() == m_editor->cursor()) {
-                auto buddy = find_span_of_type(i, pair.close, pair.open, Direction::Forward);
-                if (buddy != -1)
-                    make_buddies(i, buddy);
-                return;
-            }
-        }
-
-        auto right_of_end = span.range.end();
-        right_of_end.set_column(right_of_end.column() + 1);
-
-        for (auto& pair : pairs) {
-            if (token_type == pair.close && right_of_end == m_editor->cursor()) {
-                auto buddy = find_span_of_type(i, pair.open, pair.close, Direction::Backward);
-                if (buddy != -1)
-                    make_buddies(i, buddy);
-                return;
-            }
-        }
+    static Vector<SyntaxHighlighter::MatchingTokenPair> pairs;
+    if (pairs.is_empty()) {
+        pairs.append({ reinterpret_cast<void*>(Cpp::Token::Type::LeftCurly), reinterpret_cast<void*>(Cpp::Token::Type::RightCurly) });
+        pairs.append({ reinterpret_cast<void*>(Cpp::Token::Type::LeftParen), reinterpret_cast<void*>(Cpp::Token::Type::RightParen) });
+        pairs.append({ reinterpret_cast<void*>(Cpp::Token::Type::LeftBracket), reinterpret_cast<void*>(Cpp::Token::Type::RightBracket) });
     }
+    return pairs;
+}
+
+bool CppSyntaxHighlighter::token_types_equal(void* token1, void* token2) const
+{
+    return static_cast<Cpp::Token::Type>(reinterpret_cast<size_t>(token1)) == static_cast<Cpp::Token::Type>(reinterpret_cast<size_t>(token2));
 }
 
 CppSyntaxHighlighter::~CppSyntaxHighlighter()

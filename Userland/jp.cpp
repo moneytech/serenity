@@ -28,6 +28,7 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/StringBuilder.h>
+#include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -46,13 +47,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (argc != 2) {
-        fprintf(stderr, "usage: jp <file>\n");
-        return 0;
-    }
-    auto file = Core::File::construct(argv[1]);
+    const char* path = nullptr;
+
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(path, "Path to JSON file", "path");
+    args_parser.parse(argc, argv);
+
+    auto file = Core::File::construct(path);
     if (!file->open(Core::IODevice::ReadOnly)) {
-        fprintf(stderr, "Couldn't open %s for reading: %s\n", argv[1], file->error_string());
+        fprintf(stderr, "Couldn't open %s for reading: %s\n", path, file->error_string());
         return 1;
     }
 
@@ -63,8 +66,12 @@ int main(int argc, char** argv)
 
     auto file_contents = file->read_all();
     auto json = JsonValue::from_string(file_contents);
+    if (!json.has_value()) {
+        fprintf(stderr, "Couldn't parse %s as JSON\n", path);
+        return 1;
+    }
 
-    print(json);
+    print(json.value());
     printf("\n");
 
     return 0;
@@ -101,7 +108,7 @@ void print(const JsonValue& value, int indent)
         printf("\033[35;1m");
     else if (value.is_bool())
         printf("\033[32;1m");
-    else if (value.is_null() || value.is_undefined())
+    else if (value.is_null())
         printf("\033[34;1m");
     if (value.is_string())
         putchar('"');

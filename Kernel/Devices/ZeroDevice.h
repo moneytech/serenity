@@ -38,10 +38,10 @@ public:
 
 private:
     // ^CharacterDevice
-    virtual ssize_t read(FileDescription&, u8*, ssize_t) override;
-    virtual ssize_t write(FileDescription&, const u8*, ssize_t) override;
-    virtual bool can_read(const FileDescription&) const override;
-    virtual bool can_write(const FileDescription&) const override { return true; }
+    virtual KResultOr<size_t> read(FileDescription&, size_t, UserOrKernelBuffer&, size_t) override;
+    virtual KResultOr<size_t> write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t) override;
+    virtual bool can_read(const FileDescription&, size_t) const override;
+    virtual bool can_write(const FileDescription&, size_t) const override { return true; }
     virtual const char* class_name() const override { return "ZeroDevice"; }
 };
 

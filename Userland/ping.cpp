@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <LibCore/ArgsParser.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -35,7 +36,7 @@
 #include <time.h>
 #include <unistd.h>
 
-uint16_t internet_checksum(const void* ptr, size_t count)
+static uint16_t internet_checksum(const void* ptr, size_t count)
 {
     uint32_t checksum = 0;
     auto* w = (const uint16_t*)ptr;
@@ -57,10 +58,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (argc != 2) {
-        printf("usage: ping <host>\n");
-        return 0;
-    }
+    const char* host = nullptr;
+
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(host, "Host to ping", "host");
+    args_parser.parse(argc, argv);
 
     int fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (fd < 0) {
@@ -87,9 +89,9 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    auto* hostent = gethostbyname(argv[1]);
+    auto* hostent = gethostbyname(host);
     if (!hostent) {
-        printf("Lookup failed for '%s'\n", argv[1]);
+        printf("Lookup failed for '%s'\n", host);
         return 1;
     }
 
@@ -123,7 +125,10 @@ int main(int argc, char** argv)
         ping_packet.header.code = 0;
         ping_packet.header.un.echo.id = htons(pid);
         ping_packet.header.un.echo.sequence = htons(seq++);
-        strcpy(ping_packet.msg, "Hello there!\n");
+
+        bool fits = String("Hello there!\n").copy_characters_to_buffer(ping_packet.msg, sizeof(ping_packet.msg));
+        // It's a constant string, we can be sure that it fits.
+        ASSERT(fits);
 
         ping_packet.header.checksum = internet_checksum(&ping_packet, sizeof(PingPacket));
 

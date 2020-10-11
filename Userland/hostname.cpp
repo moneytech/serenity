@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <LibCore/ArgsParser.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,19 +32,26 @@
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    const char* hostname = nullptr;
 
-    (void)argc;
-    (void)argv;
-    char buffer[HOST_NAME_MAX];
-    int rc = gethostname(buffer, sizeof(buffer));
-    if (rc < 0) {
-        printf("gethostname() error: %s\n", strerror(errno));
-        return 1;
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(hostname, "Hostname to set", "hostname", Core::ArgsParser::Required::No);
+    args_parser.parse(argc, argv);
+
+    if (!hostname) {
+        char buffer[HOST_NAME_MAX];
+        int rc = gethostname(buffer, sizeof(buffer));
+        if (rc < 0) {
+            perror("gethostname");
+            return 1;
+        }
+        printf("%s\n", buffer);
+    } else {
+        if (strlen(hostname) >= HOST_NAME_MAX) {
+            fprintf(stderr, "Hostname must be less than %i characters\n", HOST_NAME_MAX);
+            return 1;
+        }
+        sethostname(hostname, strlen(hostname));
     }
-    printf("%s\n", buffer);
     return 0;
 }

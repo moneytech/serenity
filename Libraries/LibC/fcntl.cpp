@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -38,6 +38,7 @@ int fcntl(int fd, int cmd, ...)
     va_start(ap, cmd);
     u32 extra_arg = va_arg(ap, u32);
     int rc = syscall(SC_fcntl, fd, cmd, extra_arg);
+    va_end(ap);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 

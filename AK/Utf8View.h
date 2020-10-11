@@ -37,14 +37,16 @@ class Utf8CodepointIterator {
     friend class Utf8View;
 
 public:
-    ~Utf8CodepointIterator() {}
+    Utf8CodepointIterator() { }
+    ~Utf8CodepointIterator() { }
 
     bool operator==(const Utf8CodepointIterator&) const;
     bool operator!=(const Utf8CodepointIterator&) const;
     Utf8CodepointIterator& operator++();
     u32 operator*() const;
 
-    int codepoint_length_in_bytes() const;
+    int code_point_length_in_bytes() const;
+    bool done() const { return !m_length; }
 
 private:
     Utf8CodepointIterator(const unsigned char*, int);
@@ -54,10 +56,11 @@ private:
 
 class Utf8View {
 public:
+    Utf8View() { }
     explicit Utf8View(const String&);
     explicit Utf8View(const StringView&);
     explicit Utf8View(const char*);
-    ~Utf8View() {}
+    ~Utf8View() { }
 
     const StringView& as_string() const { return m_string; }
 
@@ -70,7 +73,14 @@ public:
     Utf8View substring_view(int byte_offset, int byte_length) const;
     bool is_empty() const { return m_string.is_empty(); }
 
-    bool validate() const;
+    bool validate(size_t& valid_bytes) const;
+    bool validate() const
+    {
+        size_t valid_bytes;
+        return validate(valid_bytes);
+    }
+
+    size_t length_in_code_points() const;
 
 private:
     const unsigned char* begin_ptr() const;
@@ -81,4 +91,5 @@ private:
 
 }
 
+using AK::Utf8CodepointIterator;
 using AK::Utf8View;

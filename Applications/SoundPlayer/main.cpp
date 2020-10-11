@@ -26,7 +26,6 @@
 
 #include "SoundPlayerWidget.h"
 #include <LibAudio/ClientConnection.h>
-#include <LibGfx/CharacterBitmap.h>
 #include <LibGUI/AboutDialog.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
@@ -34,6 +33,7 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/Window.h>
+#include <LibGfx/CharacterBitmap.h>
 #include <stdio.h>
 
 int main(int argc, char** argv)
@@ -43,7 +43,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer accept rpath unix", nullptr) < 0) {
         perror("pledge");
@@ -61,48 +61,42 @@ int main(int argc, char** argv)
     auto window = GUI::Window::construct();
     window->set_title("SoundPlayer");
     window->set_resizable(false);
-    window->set_rect(300, 300, 350, 140);
+    window->resize(350, 140);
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-sound-player.png"));
 
-    auto menubar = make<GUI::MenuBar>();
-    auto app_menu = GUI::Menu::construct("SoundPlayer");
-    auto player = SoundPlayerWidget::construct(window, audio_client);
+    auto menubar = GUI::MenuBar::construct();
+    auto& app_menu = menubar->add_menu("SoundPlayer");
+    auto& player = window->set_main_widget<SoundPlayerWidget>(window, audio_client);
 
     if (argc > 1) {
         String path = argv[1];
-        player->open_file(path);
-        player->manager().play();
+        player.open_file(path);
+        player.manager().play();
     }
 
-    auto hide_scope = GUI::Action::create("Hide scope", { Mod_Ctrl, Key_H }, [&](GUI::Action& action) {
-        action.set_checked(!action.is_checked());
-        player->hide_scope(action.is_checked());
+    auto hide_scope = GUI::Action::create_checkable("Hide scope", { Mod_Ctrl, Key_H }, [&](auto& action) {
+        player.hide_scope(action.is_checked());
     });
-    hide_scope->set_checkable(true);
 
-    app_menu->add_action(GUI::CommonActions::make_open_action([&](auto&) {
-        Optional<String> path = GUI::FilePicker::get_open_filepath("Open wav file...");
+    app_menu.add_action(GUI::CommonActions::make_open_action([&](auto&) {
+        Optional<String> path = GUI::FilePicker::get_open_filepath(window, "Open wav file...");
         if (path.has_value()) {
-            player->open_file(path.value());
+            player.open_file(path.value());
         }
     }));
-    app_menu->add_action(move(hide_scope));
-    app_menu->add_separator();
-    app_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
-        app.quit();
+    app_menu.add_action(move(hide_scope));
+    app_menu.add_separator();
+    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+        app->quit();
     }));
 
-    auto help_menu = GUI::Menu::construct("Help");
-    help_menu->add_action(GUI::Action::create("About", [](auto&) {
-        GUI::AboutDialog::show("SoundPlayer", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-sound-player.png"));
+    auto& help_menu = menubar->add_menu("Help");
+    help_menu.add_action(GUI::Action::create("About", [&](auto&) {
+        GUI::AboutDialog::show("SoundPlayer", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-sound-player.png"), window);
     }));
 
-    menubar->add_menu(move(app_menu));
-    menubar->add_menu(move(help_menu));
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
-    window->set_main_widget(player);
     window->show();
-
-    return app.exec();
+    return app->exec();
 }

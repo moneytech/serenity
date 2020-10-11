@@ -24,8 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <Kernel/IO.h>
 #include <Kernel/Net/RTL8139NetworkAdapter.h>
-#include <LibBareMetal/IO.h>
 
 //#define RTL8139_DEBUG
 
@@ -125,51 +125,51 @@ namespace Kernel {
 #define RX_BUFFER_SIZE 32768
 #define TX_BUFFER_SIZE PACKET_SIZE_MAX
 
-void RTL8139NetworkAdapter::detect(const PCI::Address& address)
+void RTL8139NetworkAdapter::detect()
 {
-    if (address.is_null())
-        return;
     static const PCI::ID rtl8139_id = { 0x10EC, 0x8139 };
-    PCI::ID id = PCI::get_id(address);
-    if (id != rtl8139_id)
-        return;
-    u8 irq = PCI::get_interrupt_line(address);
-    (void)adopt(*new RTL8139NetworkAdapter(address, irq)).leak_ref();
+    PCI::enumerate([&](const PCI::Address& address, PCI::ID id) {
+        if (address.is_null())
+            return;
+        if (id != rtl8139_id)
+            return;
+        u8 irq = PCI::get_interrupt_line(address);
+        (void)adopt(*new RTL8139NetworkAdapter(address, irq)).leak_ref();
+    });
 }
 
 RTL8139NetworkAdapter::RTL8139NetworkAdapter(PCI::Address address, u8 irq)
     : PCI::Device(address, irq)
+    , m_io_base(PCI::get_BAR0(pci_address()) & ~1)
+    , m_rx_buffer(MM.allocate_contiguous_kernel_region(PAGE_ROUND_UP(RX_BUFFER_SIZE + PACKET_SIZE_MAX), "RTL8139 RX", Region::Access::Read | Region::Access::Write))
+    , m_packet_buffer(MM.allocate_contiguous_kernel_region(PAGE_ROUND_UP(PACKET_SIZE_MAX), "RTL8139 Packet buffer", Region::Access::Read | Region::Access::Write))
 {
+    m_tx_buffers.ensure_capacity(RTL8139_TX_BUFFER_COUNT);
     set_interface_name("rtl8139");
 
-    kprintf("RTL8139: Found at PCI address %b:%b:%b\n", pci_address().bus(), pci_address().slot(), pci_address().function());
+    klog() << "RTL8139: Found @ " << pci_address();
 
     enable_bus_mastering(pci_address());
 
-    m_io_base = PCI::get_BAR0(pci_address()) & ~1;
     m_interrupt_line = PCI::get_interrupt_line(pci_address());
-    kprintf("RTL8139: IO port base: %w\n", m_io_base);
-    kprintf("RTL8139: Interrupt line: %u\n", m_interrupt_line);
+    klog() << "RTL8139: port base: " << m_io_base;
+    klog() << "RTL8139: Interrupt line: " << m_interrupt_line;
 
     // we add space to account for overhang from the last packet - the rtl8139
     // can optionally guarantee that packets will be contiguous by
     // purposefully overrunning the rx buffer
-    m_rx_buffer_addr = (uintptr_t)virtual_to_low_physical(kmalloc_aligned(RX_BUFFER_SIZE + PACKET_SIZE_MAX, 16));
-    kprintf("RTL8139: RX buffer: P%p\n", m_rx_buffer_addr);
+    klog() << "RTL8139: RX buffer: " << m_rx_buffer->physical_page(0)->paddr();
 
-    auto tx_buffer_addr = (uintptr_t)virtual_to_low_physical(kmalloc_aligned(TX_BUFFER_SIZE * 4, 16));
     for (int i = 0; i < RTL8139_TX_BUFFER_COUNT; i++) {
-        m_tx_buffer_addr[i] = tx_buffer_addr + TX_BUFFER_SIZE * i;
-        kprintf("RTL8139: TX buffer %d: P%p\n", i, m_tx_buffer_addr[i]);
+        m_tx_buffers.append(MM.allocate_contiguous_kernel_region(PAGE_ROUND_UP(TX_BUFFER_SIZE), "RTL8139 TX", Region::Access::Write | Region::Access::Read));
+        klog() << "RTL8139: TX buffer " << i << ": " << m_tx_buffers[i]->physical_page(0)->paddr();
     }
-
-    m_packet_buffer = (uintptr_t)kmalloc(PACKET_SIZE_MAX);
 
     reset();
 
     read_mac_address();
     const auto& mac = mac_address();
-    kprintf("RTL8139: MAC address: %s\n", mac.to_string().characters());
+    klog() << "RTL8139: MAC address: " << mac.to_string().characters();
 
     enable_irq();
 }
@@ -178,14 +178,16 @@ RTL8139NetworkAdapter::~RTL8139NetworkAdapter()
 {
 }
 
-void RTL8139NetworkAdapter::handle_irq(RegisterState&)
+void RTL8139NetworkAdapter::handle_irq(const RegisterState&)
 {
     for (;;) {
         int status = in16(REG_ISR);
         out16(REG_ISR, status);
 
+        m_entropy_source.add_random_event(status);
+
 #ifdef RTL8139_DEBUG
-        kprintf("RTL8139NetworkAdapter::handle_irq status=%#04x\n", status);
+        klog() << "RTL8139NetworkAdapter::handle_irq status=0x" << String::format("%x", status);
 #endif
 
         if ((status & (INT_RXOK | INT_RXERR | INT_TXOK | INT_TXERR | INT_RX_BUFFER_OVERFLOW | INT_LINK_CHANGE | INT_RX_FIFO_OVERFLOW | INT_LENGTH_CHANGE | INT_SYSTEM_ERROR)) == 0)
@@ -193,38 +195,38 @@ void RTL8139NetworkAdapter::handle_irq(RegisterState&)
 
         if (status & INT_RXOK) {
 #ifdef RTL8139_DEBUG
-            kprintf("RTL8139NetworkAdapter: rx ready\n");
+            klog() << "RTL8139NetworkAdapter: rx ready";
 #endif
             receive();
         }
         if (status & INT_RXERR) {
-            kprintf("RTL8139NetworkAdapter: rx error - resetting device\n");
+            klog() << "RTL8139NetworkAdapter: rx error - resetting device";
             reset();
         }
         if (status & INT_TXOK) {
 #ifdef RTL8139_DEBUG
-            kprintf("RTL8139NetworkAdapter: tx complete\n");
+            klog() << "RTL8139NetworkAdapter: tx complete";
 #endif
         }
         if (status & INT_TXERR) {
-            kprintf("RTL8139NetworkAdapter: tx error - resetting device\n");
+            klog() << "RTL8139NetworkAdapter: tx error - resetting device";
             reset();
         }
         if (status & INT_RX_BUFFER_OVERFLOW) {
-            kprintf("RTL8139NetworkAdapter: rx buffer overflow\n");
+            klog() << "RTL8139NetworkAdapter: rx buffer overflow";
         }
         if (status & INT_LINK_CHANGE) {
             m_link_up = (in8(REG_MSR) & MSR_LINKB) == 0;
-            kprintf("RTL8139NetworkAdapter: link status changed up=%d\n", m_link_up);
+            klog() << "RTL8139NetworkAdapter: link status changed up=" << m_link_up;
         }
         if (status & INT_RX_FIFO_OVERFLOW) {
-            kprintf("RTL8139NetworkAdapter: rx fifo overflow\n");
+            klog() << "RTL8139NetworkAdapter: rx fifo overflow";
         }
         if (status & INT_LENGTH_CHANGE) {
-            kprintf("RTL8139NetworkAdapter: cable length change\n");
+            klog() << "RTL8139NetworkAdapter: cable length change";
         }
         if (status & INT_SYSTEM_ERROR) {
-            kprintf("RTL8139NetworkAdapter: system error - resetting device\n");
+            klog() << "RTL8139NetworkAdapter: system error - resetting device";
             reset();
         }
     }
@@ -250,7 +252,7 @@ void RTL8139NetworkAdapter::reset()
     // device might be in sleep mode, this will take it out
     out8(REG_CONFIG1, 0);
     // set up rx buffer
-    out32(REG_RXBUF, m_rx_buffer_addr);
+    out32(REG_RXBUF, m_rx_buffer->physical_page(0)->paddr().get());
     // reset missed packet counter
     out8(REG_MPC, 0);
     // "basic mode control register" options - 100mbit, full duplex, auto
@@ -268,7 +270,7 @@ void RTL8139NetworkAdapter::reset()
     out32(REG_TXCFG, TXCFG_TXRR_ZERO | TXCFG_MAX_DMA_1K | TXCFG_IFG11);
     // tell the chip where we want it to DMA from for outgoing packets.
     for (int i = 0; i < 4; i++)
-        out32(REG_TXADDR0 + (i * 4), m_tx_buffer_addr[i]);
+        out32(REG_TXADDR0 + (i * 4), m_tx_buffers[i]->physical_page(0)->paddr().get());
     // re-lock config registers
     out8(REG_CFG9346, CFG9346_NONE);
     // enable rx/tx again in case they got turned off (apparently some cards
@@ -288,14 +290,14 @@ void RTL8139NetworkAdapter::read_mac_address()
     set_mac_address(mac);
 }
 
-void RTL8139NetworkAdapter::send_raw(const u8* data, size_t length)
+void RTL8139NetworkAdapter::send_raw(ReadonlyBytes payload)
 {
 #ifdef RTL8139_DEBUG
-    kprintf("RTL8139NetworkAdapter::send_raw length=%d\n", length);
+    klog() << "RTL8139NetworkAdapter::send_raw length=" << payload.size();
 #endif
 
-    if (length > PACKET_SIZE_MAX) {
-        kprintf("RTL8139NetworkAdapter: packet was too big; discarding\n");
+    if (payload.size() > PACKET_SIZE_MAX) {
+        klog() << "RTL8139NetworkAdapter: packet was too big; discarding";
         return;
     }
 
@@ -311,25 +313,26 @@ void RTL8139NetworkAdapter::send_raw(const u8* data, size_t length)
     }
 
     if (hw_buffer == -1) {
-        kprintf("RTL8139NetworkAdapter: hardware buffers full; discarding packet\n");
+        klog() << "RTL8139NetworkAdapter: hardware buffers full; discarding packet";
         return;
     } else {
 #ifdef RTL8139_DEBUG
-        kprintf("RTL8139NetworkAdapter: chose buffer %d @ %p\n", hw_buffer, m_tx_buffer_addr[hw_buffer]);
+        klog() << "RTL8139NetworkAdapter: chose buffer " << hw_buffer << " @ " << PhysicalAddress(m_tx_buffers[hw_buffer]);
 #endif
         m_tx_next_buffer = (hw_buffer + 1) % 4;
     }
 
-    memcpy((void*)low_physical_to_virtual(m_tx_buffer_addr[hw_buffer]), data, length);
-    memset((void*)(low_physical_to_virtual(m_tx_buffer_addr[hw_buffer]) + length), 0, TX_BUFFER_SIZE - length);
+    memcpy(m_tx_buffers[hw_buffer]->vaddr().as_ptr(), payload.data(), payload.size());
+    memset(m_tx_buffers[hw_buffer]->vaddr().as_ptr() + payload.size(), 0, TX_BUFFER_SIZE - payload.size());
 
     // the rtl8139 will not actually emit packets onto the network if they're
     // smaller than 64 bytes. the rtl8139 adds a checksum to the end of each
     // packet, and that checksum is four bytes long, so we pad the packet to
     // 60 bytes if necessary to make sure the whole thing is large enough.
+    auto length = payload.size();
     if (length < 60) {
 #ifdef RTL8139_DEBUG
-        kprintf("RTL8139NetworkAdapter: adjusting payload size from %zu to 60\n", length);
+        klog() << "RTL8139NetworkAdapter: adjusting payload size from " << length << " to 60";
 #endif
         length = 60;
     }
@@ -339,61 +342,61 @@ void RTL8139NetworkAdapter::send_raw(const u8* data, size_t length)
 
 void RTL8139NetworkAdapter::receive()
 {
-    auto* start_of_packet = (const u8*)(low_physical_to_virtual(m_rx_buffer_addr) + m_rx_buffer_offset);
+    auto* start_of_packet = m_rx_buffer->vaddr().as_ptr() + m_rx_buffer_offset;
 
     u16 status = *(const u16*)(start_of_packet + 0);
     u16 length = *(const u16*)(start_of_packet + 2);
 
 #ifdef RTL8139_DEBUG
-    kprintf("RTL8139NetworkAdapter::receive status=%04x length=%d offset=%d\n", status, length, m_rx_buffer_offset);
+    klog() << "RTL8139NetworkAdapter::receive status=0x" << String::format("%x", status) << " length=" << length << " offset=" << m_rx_buffer_offset;
 #endif
 
     if (!(status & RX_OK) || (status & (RX_INVALID_SYMBOL_ERROR | RX_CRC_ERROR | RX_FRAME_ALIGNMENT_ERROR)) || (length >= PACKET_SIZE_MAX) || (length < PACKET_SIZE_MIN)) {
-        kprintf("RTL8139NetworkAdapter::receive got bad packet status=%04x length=%d\n", status, length);
+        klog() << "RTL8139NetworkAdapter::receive got bad packet status=0x" << String::format("%x", status) << " length=" << length;
         reset();
         return;
     }
 
     // we never have to worry about the packet wrapping around the buffer,
     // since we set RXCFG_WRAP_INHIBIT, which allows the rtl8139 to write data
-    // past the end of the alloted space.
-    memcpy((u8*)m_packet_buffer, (const u8*)(start_of_packet + 4), length - 4);
+    // past the end of the allotted space.
+    memcpy(m_packet_buffer->vaddr().as_ptr(), (const u8*)(start_of_packet + 4), length - 4);
     // let the card know that we've read this data
     m_rx_buffer_offset = ((m_rx_buffer_offset + length + 4 + 3) & ~3) % RX_BUFFER_SIZE;
     out16(REG_CAPR, m_rx_buffer_offset - 0x10);
     m_rx_buffer_offset %= RX_BUFFER_SIZE;
 
-    did_receive((const u8*)m_packet_buffer, length - 4);
+    did_receive({ m_packet_buffer->vaddr().as_ptr(), (size_t)(length - 4) });
 }
 
 void RTL8139NetworkAdapter::out8(u16 address, u8 data)
 {
-    IO::out8(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 void RTL8139NetworkAdapter::out16(u16 address, u16 data)
 {
-    IO::out16(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 void RTL8139NetworkAdapter::out32(u16 address, u32 data)
 {
-    IO::out32(m_io_base + address, data);
+    m_io_base.offset(address).out(data);
 }
 
 u8 RTL8139NetworkAdapter::in8(u16 address)
 {
-    return IO::in8(m_io_base + address);
+    return m_io_base.offset(address).in<u8>();
 }
 
 u16 RTL8139NetworkAdapter::in16(u16 address)
 {
-    return IO::in16(m_io_base + address);
+    return m_io_base.offset(address).in<u16>();
 }
 
 u32 RTL8139NetworkAdapter::in32(u16 address)
 {
-    return IO::in32(m_io_base + address);
+    return m_io_base.offset(address).in<u32>();
 }
 
 }

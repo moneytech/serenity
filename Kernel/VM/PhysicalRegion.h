@@ -27,7 +27,8 @@
 #pragma once
 
 #include <AK/Bitmap.h>
-#include <AK/NonnullRefPtr.h>
+#include <AK/NonnullRefPtrVector.h>
+#include <AK/Optional.h>
 #include <AK/RefCounted.h>
 #include <Kernel/VM/PhysicalPage.h>
 
@@ -38,7 +39,7 @@ class PhysicalRegion : public RefCounted<PhysicalRegion> {
 
 public:
     static NonnullRefPtr<PhysicalRegion> create(PhysicalAddress lower, PhysicalAddress upper);
-    ~PhysicalRegion() {}
+    ~PhysicalRegion() { }
 
     void expand(PhysicalAddress lower, PhysicalAddress upper);
     unsigned finalize_capacity();
@@ -46,23 +47,29 @@ public:
     PhysicalAddress lower() const { return m_lower; }
     PhysicalAddress upper() const { return m_upper; }
     unsigned size() const { return m_pages; }
-    unsigned used() const { return m_used; }
-    unsigned free() const { return m_pages - m_used; }
-    bool contains(PhysicalPage& page) const { return page.paddr() >= m_lower && page.paddr() <= m_upper; }
+    unsigned used() const { return m_used - m_recently_returned.size(); }
+    unsigned free() const { return m_pages - m_used + m_recently_returned.size(); }
+    bool contains(const PhysicalPage& page) const { return page.paddr() >= m_lower && page.paddr() <= m_upper; }
 
     RefPtr<PhysicalPage> take_free_page(bool supervisor);
-    void return_page_at(PhysicalAddress addr);
-    void return_page(PhysicalPage&& page) { return_page_at(page.paddr()); }
+    NonnullRefPtrVector<PhysicalPage> take_contiguous_free_pages(size_t count, bool supervisor);
+    void return_page(const PhysicalPage& page);
 
 private:
+    unsigned find_contiguous_free_pages(size_t count);
+    Optional<unsigned> find_and_allocate_contiguous_range(size_t count);
+    Optional<unsigned> find_one_free_page();
+    void free_page_at(PhysicalAddress addr);
+
     PhysicalRegion(PhysicalAddress lower, PhysicalAddress upper);
 
     PhysicalAddress m_lower;
     PhysicalAddress m_upper;
     unsigned m_pages { 0 };
     unsigned m_used { 0 };
-    unsigned m_last { 0 };
     Bitmap m_bitmap;
+    size_t m_free_hint { 0 };
+    Vector<PhysicalAddress, 256> m_recently_returned;
 };
 
 }

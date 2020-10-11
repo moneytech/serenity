@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <errno.h>
 #include <getopt.h>
 #include <stdint.h>
@@ -36,20 +36,17 @@
 #if !defined __ENUMERATE_SYSCALL
 #    define __ENUMERATE_SYSCALL(x) SC_##x,
 #endif
-#if !defined __ENUMERATE_REMOVED_SYSCALL
-#    define __ENUMERATE_REMOVED_SYSCALL(x)
-#endif
 
 #define SC_NARG 4
 
 Syscall::Function syscall_table[] = {
-    ENUMERATE_SYSCALLS
+    ENUMERATE_SYSCALLS(__ENUMERATE_SYSCALL)
 };
 
-uintptr_t arg[SC_NARG];
+FlatPtr arg[SC_NARG];
 char buf[BUFSIZ];
 
-uintptr_t parse(char* s);
+FlatPtr parse(char* s);
 
 int main(int argc, char** argv)
 {
@@ -104,13 +101,13 @@ int main(int argc, char** argv)
     return -1;
 }
 
-uintptr_t parse(char* s)
+FlatPtr parse(char* s)
 {
     char* t;
-    uintptr_t l;
+    FlatPtr l;
 
     if (strcmp(s, "buf") == 0) {
-        return (uintptr_t)buf;
+        return (FlatPtr)buf;
     }
 
     l = strtoul(s, &t, 0);
@@ -118,5 +115,5 @@ uintptr_t parse(char* s)
         return l;
     }
 
-    return (uintptr_t)s;
+    return (FlatPtr)s;
 }

@@ -31,6 +31,15 @@
 
 __BEGIN_DECLS
 
+int disown(pid_t);
+
+int shbuf_create(int, void** buffer);
+int shbuf_allow_pid(int, pid_t peer_pid);
+int shbuf_allow_all(int);
+void* shbuf_get(int shbuf_id, size_t* size);
+int shbuf_release(int shbuf_id);
+int shbuf_seal(int shbuf_id);
+
 int module_load(const char* path, size_t path_length);
 int module_unload(const char* name, size_t name_length);
 
@@ -43,7 +52,7 @@ int profiling_disable(pid_t);
 #define THREAD_PRIORITY_HIGH 50
 #define THREAD_PRIORITY_MAX 99
 
-int set_thread_boost(int tid, int amount);
+int set_thread_boost(pid_t tid, int amount);
 int set_process_boost(pid_t, int amount);
 
 #define FUTEX_WAIT 1
@@ -60,5 +69,24 @@ int purge(int mode);
 #define PERF_EVENT_FREE 2
 
 int perf_event(int type, uintptr_t arg1, uintptr_t arg2);
+
+int get_stack_bounds(uintptr_t* user_stack_base, size_t* user_stack_size);
+
+ALWAYS_INLINE void send_secret_data_to_userspace_emulator(uintptr_t data1, uintptr_t data2, uintptr_t data3)
+{
+    asm volatile(
+        ".byte 0xd6\n"
+        ".byte 0xd6\n" ::
+            : "eax");
+    asm volatile(
+        "push %%eax\n"
+        "push %%ecx\n"
+        "push %%edx\n"
+        "pop %%edx\n"
+        "pop %%ecx\n"
+        "pop %%eax\n" ::"a"(data1),
+        "c"(data2), "d"(data3)
+        : "memory");
+}
 
 __END_DECLS

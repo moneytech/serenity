@@ -24,36 +24,48 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/BufferStream.h>
 #include <AK/String.h>
 #include <LibGfx/Size.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 
 namespace Gfx {
 
-String Size::to_string() const
+template<>
+String IntSize::to_string() const
 {
     return String::format("[%dx%d]", m_width, m_height);
 }
 
-const LogStream& operator<<(const LogStream& stream, const Size& value)
+template<>
+String FloatSize::to_string() const
 {
-    return stream << value.to_string();
+    return String::format("[%fx%f]", m_width, m_height);
 }
 
 }
 
 namespace IPC {
 
-bool decode(BufferStream& stream, Gfx::Size& size)
+bool encode(Encoder& encoder, const Gfx::IntSize& size)
 {
-    int width;
-    int height;
-    stream >> width;
-    stream >> height;
-    if (stream.handle_read_failure())
+    encoder << size.width() << size.height();
+    return true;
+}
+
+bool decode(Decoder& decoder, Gfx::IntSize& size)
+{
+    int width = 0;
+    int height = 0;
+    if (!decoder.decode(width))
+        return false;
+    if (!decoder.decode(height))
         return false;
     size = { width, height };
     return true;
 }
 
 }
+
+template class Gfx::Size<int>;
+template class Gfx::Size<float>;

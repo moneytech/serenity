@@ -33,6 +33,7 @@
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/KResult.h>
 #include <Kernel/Lock.h>
+#include <Kernel/Net/NetworkAdapter.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -97,20 +98,20 @@ public:
 
     KResult shutdown(int how);
 
-    virtual KResult bind(const sockaddr*, socklen_t) = 0;
-    virtual KResult connect(FileDescription&, const sockaddr*, socklen_t, ShouldBlock) = 0;
-    virtual KResult listen(int) = 0;
+    virtual KResult bind(Userspace<const sockaddr*>, socklen_t) = 0;
+    virtual KResult connect(FileDescription&, Userspace<const sockaddr*>, socklen_t, ShouldBlock) = 0;
+    virtual KResult listen(size_t) = 0;
     virtual void get_local_address(sockaddr*, socklen_t*) = 0;
     virtual void get_peer_address(sockaddr*, socklen_t*) = 0;
     virtual bool is_local() const { return false; }
     virtual bool is_ipv4() const { return false; }
     virtual void attach(FileDescription&) = 0;
     virtual void detach(FileDescription&) = 0;
-    virtual ssize_t sendto(FileDescription&, const void*, size_t, int flags, const sockaddr*, socklen_t) = 0;
-    virtual ssize_t recvfrom(FileDescription&, void*, size_t, int flags, sockaddr*, socklen_t*) = 0;
+    virtual KResultOr<size_t> sendto(FileDescription&, const UserOrKernelBuffer&, size_t, int flags, Userspace<const sockaddr*>, socklen_t) = 0;
+    virtual KResultOr<size_t> recvfrom(FileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, timeval&) = 0;
 
-    virtual KResult setsockopt(int level, int option, const void*, socklen_t);
-    virtual KResult getsockopt(FileDescription&, int level, int option, void*, socklen_t*);
+    virtual KResult setsockopt(int level, int option, Userspace<const void*>, socklen_t);
+    virtual KResult getsockopt(FileDescription&, int level, int option, Userspace<void*>, Userspace<socklen_t*>);
 
     pid_t origin_pid() const { return m_origin.pid; }
     uid_t origin_uid() const { return m_origin.uid; }
@@ -118,14 +119,15 @@ public:
     pid_t acceptor_pid() const { return m_acceptor.pid; }
     uid_t acceptor_uid() const { return m_acceptor.uid; }
     gid_t acceptor_gid() const { return m_acceptor.gid; }
+    const RefPtr<NetworkAdapter> bound_interface() const { return m_bound_interface; }
 
     Lock& lock() { return m_lock; }
 
     // ^File
-    virtual ssize_t read(FileDescription&, u8*, ssize_t) override final;
-    virtual ssize_t write(FileDescription&, const u8*, ssize_t) override final;
+    virtual KResultOr<size_t> read(FileDescription&, size_t, UserOrKernelBuffer&, size_t) override final;
+    virtual KResultOr<size_t> write(FileDescription&, size_t, const UserOrKernelBuffer&, size_t) override final;
+    virtual KResult stat(::stat&) const override;
     virtual String absolute_path(const FileDescription&) const override = 0;
-
 
     bool has_receive_timeout() const { return m_receive_timeout.tv_sec || m_receive_timeout.tv_usec; }
     const timeval& receive_timeout() const { return m_receive_timeout; }
@@ -133,18 +135,20 @@ public:
     bool has_send_timeout() const { return m_send_timeout.tv_sec || m_send_timeout.tv_usec; }
     const timeval& send_timeout() const { return m_send_timeout; }
 
+    bool wants_timestamp() const { return m_timestamp; }
+
 protected:
     Socket(int domain, int type, int protocol);
 
     KResult queue_connection_from(NonnullRefPtr<Socket>);
 
-    int backlog() const { return m_backlog; }
-    void set_backlog(int backlog) { m_backlog = backlog; }
+    size_t backlog() const { return m_backlog; }
+    void set_backlog(size_t backlog) { m_backlog = backlog; }
 
     virtual const char* class_name() const override { return "Socket"; }
 
-    virtual void shut_down_for_reading() {}
-    virtual void shut_down_for_writing() {}
+    virtual void shut_down_for_reading() { }
+    virtual void shut_down_for_writing() { }
 
     Role m_role { Role::None };
 
@@ -160,14 +164,17 @@ private:
     int m_domain { 0 };
     int m_type { 0 };
     int m_protocol { 0 };
-    int m_backlog { 0 };
+    size_t m_backlog { 0 };
     SetupState m_setup_state { SetupState::Unstarted };
     bool m_connected { false };
     bool m_shut_down_for_reading { false };
     bool m_shut_down_for_writing { false };
 
+    RefPtr<NetworkAdapter> m_bound_interface { nullptr };
+
     timeval m_receive_timeout { 0, 0 };
     timeval m_send_timeout { 0, 0 };
+    int m_timestamp { 0 };
 
     NonnullRefPtrVector<Socket> m_pending;
 };
@@ -175,7 +182,7 @@ private:
 template<typename SocketType>
 class SocketHandle {
 public:
-    SocketHandle() {}
+    SocketHandle() { }
 
     SocketHandle(NonnullRefPtr<SocketType>&& socket)
         : m_socket(move(socket))

@@ -28,6 +28,8 @@
 #include <LibCore/File.h>
 #include <string.h>
 
+namespace HackStudio {
+
 ProjectFile::ProjectFile(const String& name)
     : m_name(name)
 {
@@ -36,7 +38,7 @@ ProjectFile::ProjectFile(const String& name)
 const GUI::TextDocument& ProjectFile::document() const
 {
     if (!m_document) {
-        m_document = GUI::TextDocument::create(nullptr);
+        m_document = CodeDocument::create(LexicalPath(m_name));
         auto file = Core::File::construct(m_name);
         if (!file->open(Core::File::ReadOnly)) {
             ASSERT_NOT_REACHED();
@@ -44,4 +46,6 @@ const GUI::TextDocument& ProjectFile::document() const
         m_document->set_text(file->read_all());
     }
     return *m_document;
+}
+
 }

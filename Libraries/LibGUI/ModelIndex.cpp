@@ -25,15 +25,39 @@
  */
 
 #include <AK/String.h>
-#include <LibGUI/ModelIndex.h>
+#include <LibGUI/Model.h>
+#include <LibGUI/Variant.h>
 
 namespace GUI {
+
+Variant ModelIndex::data(ModelRole role) const
+{
+    if (!is_valid())
+        return {};
+
+    ASSERT(model());
+    return model()->data(*this, role);
+}
 
 const LogStream& operator<<(const LogStream& stream, const ModelIndex& value)
 {
     if (value.internal_data())
         return stream << String::format("ModelIndex(%d,%d,%p)", value.row(), value.column(), value.internal_data());
     return stream << String::format("ModelIndex(%d,%d)", value.row(), value.column());
+}
+
+}
+
+namespace AK {
+
+void Formatter<GUI::ModelIndex>::format(TypeErasedFormatParams& params, FormatBuilder& builder, const GUI::ModelIndex& value)
+{
+    Formatter<StringView> formatter { *this };
+
+    if (value.internal_data())
+        formatter.format(params, builder, String::formatted("ModelIndex({},{},{:p})", value.row(), value.column(), value.internal_data()));
+    else
+        formatter.format(params, builder, String::formatted("ModelIndex({},{})", value.row(), value.column()));
 }
 
 }

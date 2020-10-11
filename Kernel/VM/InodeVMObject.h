@@ -32,17 +32,14 @@
 
 namespace Kernel {
 
-class InodeVMObject final : public VMObject {
+class InodeVMObject : public VMObject {
 public:
     virtual ~InodeVMObject() override;
-
-    static NonnullRefPtr<InodeVMObject> create_with_inode(Inode&);
-    virtual NonnullRefPtr<VMObject> clone() override;
 
     Inode& inode() { return *m_inode; }
     const Inode& inode() const { return *m_inode; }
 
-    void inode_contents_changed(Badge<Inode>, off_t, ssize_t, const u8*);
+    void inode_contents_changed(Badge<Inode>, off_t, ssize_t, const UserOrKernelBuffer&);
     void inode_size_changed(Badge<Inode>, size_t old_size, size_t new_size);
 
     size_t amount_dirty() const;
@@ -53,7 +50,7 @@ public:
     u32 writable_mappings() const;
     u32 executable_mappings() const;
 
-private:
+protected:
     explicit InodeVMObject(Inode&, size_t);
     explicit InodeVMObject(const InodeVMObject&);
 
@@ -61,7 +58,7 @@ private:
     InodeVMObject& operator=(InodeVMObject&&) = delete;
     InodeVMObject(InodeVMObject&&) = delete;
 
-    virtual bool is_inode() const override { return true; }
+    virtual bool is_inode() const final { return true; }
 
     int release_all_clean_pages_impl();
 
@@ -70,3 +67,7 @@ private:
 };
 
 }
+
+AK_BEGIN_TYPE_TRAITS(Kernel::InodeVMObject)
+static bool is_type(const Kernel::VMObject& vmobject) { return vmobject.is_inode(); }
+AK_END_TYPE_TRAITS()
